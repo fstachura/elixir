@@ -58,6 +58,7 @@ class Query:
 
     def getEnv(self):
         return {
+            **os.environ,
             "LXR_REPO_DIR": self.repo_dir,
             "LXR_DATA_DIR": self.data_dir,
         }
