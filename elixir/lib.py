@@ -21,6 +21,7 @@
 import sys
 import logging
 import subprocess, os
+from .special_tokens import always_indexed_tokens, always_indexed_prefixes
 
 logger = logging.getLogger(__name__)
 
@@ -180,6 +181,10 @@ def isIdent(bstr):
         return False
     else:
         return True
+
+def isAlwaysIndexed(token):
+    return token in always_indexed_tokens or \
+        any(token.startswith(pref) for pref in always_indexed_prefixes)
 
 def autoBytes(arg):
     if type(arg) is str:
