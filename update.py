@@ -328,8 +328,7 @@ class UpdateRefs(Thread):
 
                         ref_allowed = \
                             db.defs.exists(tok) or \
-                            (tok in always_indexed_tokens) or \
-                            any(tok.startswith(pref) for pref in always_indexed_prefixes)
+                            lib.isAlwaysIndexed(tok)
 
                         # We only index CONFIG_??? in makefiles
                         config_or_not_makefile = family != 'M' or tok.startswith(b'CONFIG_')
