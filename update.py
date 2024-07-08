@@ -326,9 +326,13 @@ class UpdateRefs(Thread):
                     if even:
                         tok = prefix + tok
 
-                        ref_allowed = db.defs.exists(tok) or (tok in always_indexed_tokens)
+                        ref_allowed = \
+                            db.defs.exists(tok) or \
+                            (tok in always_indexed_tokens) or \
+                            any(tok.startswith(pref) for pref in always_indexed_prefixes)
+
                         # We only index CONFIG_??? in makefiles
-                        config_or_not_makefile = tok.startswith(b'CONFIG_') or family != 'M'
+                        config_or_not_makefile = family != 'M' or tok.startswith(b'CONFIG_')
                         i = idx*idx_key_mod + line_num
 
                         if ref_allowed and defs_idxes.get(i) != tok and config_or_not_makefile:
