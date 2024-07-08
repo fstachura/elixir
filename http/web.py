@@ -37,6 +37,9 @@ from re import search, sub
 import sys
 sys.path = [ sys.path[0] + '/..' ] + sys.path
 from lib import validFamily
+from query import Query
+
+q = None
 
 # Create /tmp/elixir-errors if not existing yet (could happen after a reboot)
 errdir = '/tmp/elixir-errors'
@@ -71,9 +74,14 @@ if m:
     datadir = basedir + '/' + project + '/data'
     repodir = basedir + '/' + project + '/repo'
 
+    q = Query(datadir, repodir)
+
     if not(os.path.exists(datadir)) or not(os.path.exists(repodir)):
         status = 400
-
+    elif version_decoded == 'latest':
+        version_decoded = q.query('latest')
+        status = 301
+        location = '/'+project+'/'+parse.quote(version_decoded)+'/'+cmd+arg
     elif cmd == 'source':
         path = arg
         if len(path) > 0 and path[-1] == '/':
@@ -131,15 +139,9 @@ for (dirpath, dirnames, filenames) in os.walk(basedir):
     break
 projects.sort()
 
-from query import Query
-
-q = Query(datadir, repodir)
 dts_comp_support = q.query('dts-comp')
 
-if version_decoded == 'latest':
-    tag = q.query('latest')
-else:
-    tag = version_decoded
+tag = version_decoded
 
 ident = parse.unquote(ident)
 
