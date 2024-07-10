@@ -50,88 +50,160 @@ if not(os.path.isdir(errdir)):
 # Enable CGI Trackback Manager for debugging (https://docs.python.org/fr/3/library/cgitb.html)
 cgitb.enable(display=0, logdir=errdir, format='text')
 
-ident = ''
-status = 200
+def parse_url_path(path):
+    m = search('^/([^/]*)/([^/]*)(?:/([^/]))?/([^/]*)(.*)$', path)
 
-url = os.environ.get('REQUEST_URI') or os.environ.get('SCRIPT_URL')
-# Split the URL into its components (project, version, cmd, arg)
-m = search('^/([^/]*)/([^/]*)(?:/([^/]))?/([^/]*)(.*)$', url)
+    if m:
+        ctx = {
+            "project": m.group(1),
+            "version": m.group(2),
+            "version_decoded": parse.unquote(m.group(2)),
+            "family": str(m.group(3)).upper(),
+            "cmd": m.group(4),
+            "arg": m.group(5),
+            "search_family": "A",
+        }
 
-if m:
-    project = m.group(1)
-    version = m.group(2)
-    version_decoded = parse.unquote(version)
-    family = str(m.group(3)).upper()
-    cmd = m.group(4)
-    arg = m.group(5)
+        if not validFamily(ctx["family"]):
+            ctx["family"] = 'C'
 
-    if not validFamily(family):
-        family = 'C'
+        return ctx, None
+    else:
+        return {}, (400, )
 
-    search_family = 'A'
+def get_url_from_ctx(ctx):
+    url = f'/{ctx["project"]}/{parse.quote(ctx["version"])}/{ctx["family"]}/{ctx["cmd"]}/{ctx["arg"]}'
+    return url.rstrip('/')
 
+
+# redirects if path has a trailing slash
+def handle_trailing_slash(ctx):
+    if len(ctx["arg"]) > 0 and (ctx["arg"][-1] == '/' or ctx["arg"][1] == '/'):
+        ctx["arg"] = ctx["arg"].rstrip('/').lstrip('/')
+        return ctx, (301, get_url_from_ctx(ctx))
+
+    return ctx, None
+
+# TODO handle legacy source urlk
+# handle source urls, check if source path is valid
+def handle_source_url(ctx):
+    ctx, status = handle_trailing_slash(ctx)
+    if status is not None:
+        return ctx, status
+
+    if not search('^[A-Za-z0-9_/.,+-]*$', ctx["arg"]):
+        return ctx, (400,)
+
+    ctx["url"] = 'source' + ctx["arg"]
+    return ctx, None
+
+
+# add ident to ctx, return an error if ident is not valid
+def handle_invalid_ident(ctx):
+    ident = ctx["arg"][1:]
+    if not ident or not search('^[A-Za-z0-9_\$\.%-]*$', ident):
+        return ctx, (400,)
+
+    ctx["ident"] = parse.unquote(ident)
+    return ctx, None
+
+# handle ident search post by redirecting to ident/$ident_name
+def handle_ident_post_form(ctx):
+    form = cgi.FieldStorage()
+    ident2 = form.getvalue('i')
+    family2 = str(form.getvalue('f')).upper()
+    if not validFamily(family2):
+        family2 = 'C'
+
+    if ctx.get("ident", '') == '' and ident2:
+        ident2 = parse.quote(ident2.strip())
+        ctx["family"] = family2
+        ctx["arg"] = ident2
+        return ctx, (302, get_url_from_ctx(ctx))
+
+    return ctx, None
+
+# TODO handle legacy ident urls
+# handle ident urls, both post and get, check if ident path is valid
+def handle_ident_url(ctx):
+    ctx["search_family"] = ctx["family"]
+
+    ctx, status = handle_ident_post_form(ctx)
+    if status is not None:
+        return ctx, status
+
+    ctx, status = handle_invalid_ident(ctx)
+    if status is not None:
+        return ctx, status
+
+    ctx["url"] = ctx["family"] + '/ident/' + ctx["ident"]
+    return ctx, None
+
+
+# create query object from context, add it to context, return error if project name is invalid
+def add_query_to_ctx(ctx):
     basedir = os.environ['LXR_PROJ_DIR']
-    datadir = basedir + '/' + project + '/data'
-    repodir = basedir + '/' + project + '/repo'
-
-    q = Query(datadir, repodir)
+    datadir = basedir + '/' + ctx["project"] + '/data'
+    repodir = basedir + '/' + ctx["project"] + '/repo'
 
     if not(os.path.exists(datadir)) or not(os.path.exists(repodir)):
-        status = 400
-    elif version_decoded == 'latest':
-        version_decoded = q.query('latest')
-        status = 301
-        location = '/'+project+'/'+parse.quote(version_decoded)+'/'+cmd+arg
-    elif cmd == 'source':
-        path = arg
-        if len(path) > 0 and path[-1] == '/':
-            path = path[:-1]
-            status = 301
-            location = '/'+project+'/'+version+'/source'+path
-        else:
-            mode = 'source'
-            if not search('^[A-Za-z0-9_/.,+-]*$', path):
-                status = 400
-            url = 'source'+path
+        return ctx, (400,)
 
-    elif cmd == 'ident':
-        search_family = family
+    ctx["query"] = Query(datadir, repodir)
+    return ctx, None
 
-        ident = arg[1:]
-        form = cgi.FieldStorage()
-        ident2 = form.getvalue('i')
-        family2 = str(form.getvalue('f')).upper()
-        if not validFamily(family2):
-            family2 = 'C'
+# redirect latest version to the latest tag
+def handle_latest_redirect(ctx):
+    if ctx["version"] == 'latest':
+        q = ctx["query"]
+        ctx["version_decoded"] = q.query('latest')
+        ctx["version"] = parse.quote(q.query('latest'))
+        return ctx, (301, get_url_from_ctx(ctx))
 
-        if ident == '' and ident2:
-            status = 302
-            ident2 = parse.quote(ident2.strip())
-            location = '/'+project+'/'+version+'/'+family2+'/ident/'+ident2
-        else:
-            mode = 'ident'
-            if not(ident and search('^[A-Za-z0-9_\$\.%-]*$', ident)):
-                ident = ''
-            url = family + '/ident/' + ident
+    return ctx, None
+
+# parse url, create query, hanle source and ident urls
+def handle_request(path):
+    ctx, status = parse_url_path(path)
+    if status is not None:
+        return ctx, status
+
+    ctx, status = add_query_to_ctx(ctx)
+    if status is not None:
+        return ctx, status
+
+    ctx, status = handle_latest_redirect(ctx)
+    if status is not None:
+        return ctx, status
+
+    if ctx["cmd"] == 'source':
+        return handle_source_url(ctx)
+    elif ctx["cmd"] == 'ident':
+        return handle_ident_url(ctx)
     else:
-        status = 400
-else:
-    status = 400
+        return ctx, (400,)
 
-if status == 301:
-    realprint('Status: 301 Moved Permanently')
-    realprint('Location: '+location+'\n')
-    exit()
-elif status == 302:
-    realprint('Status: 302 Found')
-    realprint('Location: '+location+'\n')
-    exit()
-elif status == 400:
-    realprint('Status: 400 Bad Request\n')
-    exit()
 
-os.environ['LXR_DATA_DIR'] = datadir
-os.environ['LXR_REPO_DIR'] = repodir
+url = os.environ.get('REQUEST_URI') or os.environ.get('SCRIPT_URL')
+ctx, status = handle_request(url)
+if status is not None:
+    if status[0] == 301:
+        realprint('Status: 301 Moved Permanently')
+        realprint('Location: '+status[1]+'\n')
+        exit()
+    elif status[0] == 302:
+        realprint('Status: 302 Found')
+        realprint('Location: '+status[1]+'\n')
+        exit()
+    elif status[0] == 400:
+        realprint('Status: 400 Bad Request\n')
+        exit()
+
+
+q = ctx["query"]
+basedir = os.environ['LXR_PROJ_DIR']
+datadir = q.data_dir
+repodir = q.repo_dir
 
 projects = []
 for (dirpath, dirnames, filenames) in os.walk(basedir):
@@ -141,19 +213,22 @@ projects.sort()
 
 dts_comp_support = q.query('dts-comp')
 
-tag = version_decoded
-
-ident = parse.unquote(ident)
+tag = ctx["version_decoded"]
+version = ctx["version"]
+project = ctx["project"]
+mode = ctx["cmd"]
+path = ctx["arg"]
+url = ctx["url"]
+family = ctx["search_family"]
+ident = ctx.get("ident", '')
 
 data = {
-    'baseurl': '/' + project + '/',
+    **ctx,
+    'baseurl': '/' + ctx["project"] + '/',
     'tag': tag,
-    'version': version,
     'url': url,
-    'project': project,
     'projects': projects,
-    'ident': ident,
-    'family': search_family,
+    'family': ctx["search_family"],
     'breadcrumb': '<a class="project" href="'+version+'/source">/</a>'
 }
 
