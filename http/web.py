@@ -228,6 +228,26 @@ def format_code(filename, code):
     formatter = pygments.formatters.HtmlFormatter(linenos=True, anchorlinenos=True)
     return pygments.highlight(code, lexer, formatter)
 
+# Return true if filter can be applied to file
+# filter: filter dictionary
+# dir: file directory without filename
+# filename: filename without extension
+# extension: just filename extension
+def filter_applies(filter, dir, filename, extension):
+    c = filter['case']
+    if c == 'any':
+        return True
+    elif c == 'filename':
+        return filename in filter['match']
+    elif c == 'extension':
+        return extension in filter['match']
+    elif c == 'path':
+        return dir.startswith(tuple(filter['match']))
+    elif c == 'filename_extension':
+        return filename.endswith(tuple(filter['match']))
+    else:
+        raise ValueError('Invalid filter case', filter['case'])
+
 def generate_source(q, path, version, tag, project):
     code = q.query('file', tag, path)
 
@@ -267,13 +287,7 @@ def generate_source(q, path, version, tag, project):
 
     # Apply filters
     for f in filters:
-        c = f['case']
-        if (c == 'any' or
-            (c == 'filename' and filename in f['match']) or
-            (c == 'extension' and extension in f['match']) or
-            (c == 'path' and fdir.startswith(tuple(f['match']))) or
-            (c == 'filename_extension' and filename.endswith(tuple(f['match'])))):
-
+        if filter_applies(f, fdir, filename, extension):
             apply_filter = True
 
             if 'path_exceptions' in f:
@@ -283,7 +297,7 @@ def generate_source(q, path, version, tag, project):
                         break
 
             if apply_filter:
-                code = sub(f ['prerex'], f ['prefunc'], code, flags=re.MULTILINE)
+                code = sub(f['prerex'], f['prefunc'], code, flags=re.MULTILINE)
 
     result = format_code(filename, code)
 
@@ -291,14 +305,8 @@ def generate_source(q, path, version, tag, project):
     result = sub('href="#-(\d+)', 'name="L\\1" id="L\\1" href="'+version+'/source'+path+'#L\\1', result)
 
     for f in filters:
-        c = f['case']
-        if (c == 'any' or
-            (c == 'filename' and filename in f['match']) or
-            (c == 'extension' and extension in f['match']) or
-            (c == 'path' and fdir.startswith(tuple(f['match']))) or
-            (c == 'filename_extension' and filename.endswith(tuple(f['match'])))):
-
-            result = sub(f ['postrex'], f ['postfunc'], result)
+        if filter_applies(f, fdir, filename, extension):
+            result = sub(f['postrex'], f['postfunc'], result)
 
     return result
 
