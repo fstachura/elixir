@@ -228,12 +228,16 @@ def format_code(filename, code):
     formatter = pygments.formatters.HtmlFormatter(linenos=True, anchorlinenos=True)
     return pygments.highlight(code, lexer, formatter)
 
-# Return true if filter can be applied to file
-# filter: filter dictionary
-# dir: file directory without filename
-# filename: filename without extension
-# extension: just filename extension
-def filter_applies(filter, dir, filename, extension):
+# Return true if filter can be applied to file based on its path
+def filter_applies(filter, path):
+    if 'path_exceptions' in filter:
+        for p in filter['path_exceptions']:
+            if re.match(p, path):
+                return False
+
+    dir, filename = os.path.split(path)
+    filename, extension = os.path.splitext(filename)
+
     c = filter['case']
     if c == 'any':
         return True
@@ -287,17 +291,8 @@ def generate_source(q, path, version, tag, project):
 
     # Apply filters
     for f in filters:
-        if filter_applies(f, fdir, filename, extension):
-            apply_filter = True
-
-            if 'path_exceptions' in f:
-                for p in f['path_exceptions']:
-                    if re.match(p, path):
-                        apply_filter = False
-                        break
-
-            if apply_filter:
-                code = sub(f['prerex'], f['prefunc'], code, flags=re.MULTILINE)
+        if filter_applies(f, path):
+            code = sub(f['prerex'], f['prefunc'], code, flags=re.MULTILINE)
 
     result = format_code(filename, code)
 
@@ -305,7 +300,7 @@ def generate_source(q, path, version, tag, project):
     result = sub('href="#-(\d+)', 'name="L\\1" id="L\\1" href="'+version+'/source'+path+'#L\\1', result)
 
     for f in filters:
-        if filter_applies(f, fdir, filename, extension):
+        if filter_applies(f, path):
             result = sub(f['postrex'], f['postfunc'], result)
 
     return result
