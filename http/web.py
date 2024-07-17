@@ -32,6 +32,9 @@ from collections import OrderedDict, namedtuple
 from re import search, sub
 from urllib import parse
 import jinja2
+import pygments
+import pygments.lexers
+import pygments.formatters
 
 sys.path = [ sys.path[0] + '/..' ] + sys.path
 from lib import validFamily
@@ -214,11 +217,18 @@ def get_directories(basedir):
             directories.append(filename)
     return sorted(directories)
 
-def generate_source(q, path, version, tag, project):
-    import pygments
-    import pygments.lexers
-    import pygments.formatters
+# Guesses file format based on filename, returns code formatted as HTML
+def format_code(filename, code):
+    try:
+        lexer = pygments.lexers.guess_lexer_for_filename(path, code)
+    except pygments.util.ClassNotFound:
+        lexer = pygments.lexers.get_lexer_by_name('text')
 
+    lexer.stripnl = False
+    formatter = pygments.formatters.HtmlFormatter(linenos=True, anchorlinenos=True)
+    return pygments.highlight(code, lexer, formatter)
+
+def generate_source(q, path, version, tag, project):
     code = q.query('file', tag, path)
 
     fdir, fname = os.path.split(path)
@@ -275,15 +285,7 @@ def generate_source(q, path, version, tag, project):
             if apply_filter:
                 code = sub(f ['prerex'], f ['prefunc'], code, flags=re.MULTILINE)
 
-
-    try:
-        lexer = pygments.lexers.guess_lexer_for_filename(path, code)
-    except:
-        lexer = pygments.lexers.get_lexer_by_name('text')
-
-    lexer.stripnl = False
-    formatter = pygments.formatters.HtmlFormatter(linenos=True, anchorlinenos=True)
-    result = pygments.highlight(code, lexer, formatter)
+    result = format_code(filename, code)
 
     # Replace line numbers by links to the corresponding line in the current file
     result = sub('href="#-(\d+)', 'name="L\\1" id="L\\1" href="'+version+'/source'+path+'#L\\1', result)
