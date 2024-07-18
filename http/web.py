@@ -294,6 +294,7 @@ def generate_source(q, path, version, tag, project):
 
         "version": version,
         "family": family,
+        "project": project,
         "path": path,
         "tag": tag,
         "q": q,
@@ -319,7 +320,7 @@ def generate_source(q, path, version, tag, project):
     html_code_block = format_code(fname, code)
 
     # Replace line numbers by links to the corresponding line in the current file
-    html_code_block = sub('href="#-(\d+)', 'name="L\\1" id="L\\1" href="'+version+'/source'+path+'#L\\1', html_code_block)
+    html_code_block = sub('href="#-(\d+)', 'name="L\\1" id="L\\1" href="/'+project+'/'+version+'/source'+path+'#L\\1', html_code_block)
 
     for f in filters:
         if filter_applies(f, path):
@@ -406,7 +407,7 @@ def generate_source_page(q, basedir, parsed_path):
     breadcrumb_links = []
     for p in path_split:
         path_temp += '/'+p
-        breadcrumb_links.append((p, version + '/source' + path_temp))
+        breadcrumb_links.append((p, '/' + project + '/' + version + '/source' + path_temp))
 
     # Generate title
     title_suffix = project.capitalize()+' source code ('+tag+') - Bootlin'
