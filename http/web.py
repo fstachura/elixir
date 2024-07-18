@@ -425,8 +425,6 @@ def generate_source_page(q, basedir, parsed_path):
     data = {
         **template_ctx,
 
-        'current_url': stringify_source_path(parsed_path),
-
         'current_project': project,
         'current_tag': tag,
         'current_tag_urlencoded': version,
@@ -510,8 +508,6 @@ def generate_ident_page(q, basedir, parsed_path):
     title_suffix = project.capitalize()+' source code ('+tag+') - Bootlin'
 
     data = {
-        'current_url': stringify_ident_path(parsed_path),
-
         'current_project': project,
         'current_tag': tag,
         'current_tag_urlencoded': version,
