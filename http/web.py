@@ -224,7 +224,7 @@ VersionEntry = namedtuple('VersionEntry', 'version, url')
 # Takes result of Query.query('version') and prepares it for HTML generation
 # versions: OrderedDict with major version parts as keys, of OrderedDicts 
 #   with minor version parts as keys and version strings as values
-# get_url: function that takes a version strings and returns a URL
+# get_url: function that takes a version string and returns the URL
 #   for that version. Meaning of the URL can depend on the context
 def get_versions(versions, get_url):
     result = OrderedDict()
@@ -406,7 +406,7 @@ def generate_source_page(q, basedir, parsed_path):
     breadcrumb_links = []
     for p in path_split:
         path_temp += '/'+p
-        breadcrumb_links.append((p, version + '/source' + path_temp))
+        breadcrumb_links.append((p, '/' + project + '/' + version + '/source' + path_temp))
 
     # Generate title
     title_suffix = project.capitalize()+' source code ('+tag+') - Bootlin'
