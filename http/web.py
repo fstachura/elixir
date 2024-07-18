@@ -294,6 +294,7 @@ def generate_source(q, path, version, tag, project):
 
         "version": version,
         "family": family,
+        "project": project,
         "path": path,
         "tag": tag,
         "q": q,
@@ -319,7 +320,7 @@ def generate_source(q, path, version, tag, project):
     result = format_code(filename, code)
 
     # Replace line numbers by links to the corresponding line in the current file
-    result = sub('href="#-(\d+)', 'name="L\\1" id="L\\1" href="'+version+'/source'+path+'#L\\1', result)
+    result = sub('href="#-(\d+)', 'name="L\\1" id="L\\1" href="/'+project+'/'+version+'/source'+path+'#L\\1', result)
 
     for f in filters:
         if filter_applies(f, path):
