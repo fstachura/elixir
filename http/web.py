@@ -237,9 +237,9 @@ def get_projects(basedir):
 # Used to render version list in the sidebar
 VersionEntry = namedtuple('VersionEntry', 'version, url')
 
-# Takes result of Query.query('version') and prepares it for HTML generation
-# versions: OrderedDict with major version parts as keys, of OrderedDicts 
-#   with minor version parts as keys and version strings as values
+# Takes result of Query.query('version') and prepares it for the sidebar template
+# versions: OrderedDict with major parts of versions as keys, values are OrderedDicts
+#   with minor version parts as keys and complete version strings as values
 # get_url: function that takes a version string and returns the URL
 #   for that version. Meaning of the URL can depend on the context
 def get_versions(versions, get_url):
@@ -266,7 +266,7 @@ def format_code(filename, code):
     formatter = pygments.formatters.HtmlFormatter(linenos=True, anchorlinenos=True)
     return pygments.highlight(code, lexer, formatter)
 
-# Return true if filter can be applied to file based on its path
+# Return true if filter can be applied to file based on path of the file
 def filter_applies(filter, path):
     if 'path_exceptions' in filter:
         for p in filter['path_exceptions']:
@@ -290,11 +290,11 @@ def filter_applies(filter, path):
     else:
         raise ValueError('Invalid filter case', filter['case'])
 
-# Generate formatted HTML of a file, apply filters (to add links, for example)
+# Generate formatted HTML of a file, apply filters (for ex. to add identifier links)
 # q: Query object
 # project: name of the requested project
 # version: requested version of the project
-# path: path to the file in the project
+# path: path to the file in the repository
 def generate_source(q, project, version, path):
     version_unquoted = parse.unquote(version)
     code = q.query('file', version_unquoted, path)
@@ -358,11 +358,11 @@ def generate_source(q, project, version, path):
 # size: int, file size in bytes, None for directories and symlinks
 DirectoryEntry = namedtuple('DirectoryEntry', 'type, name, path, url, size')
 
-# Returns a list of DirectoryEntry objects with information about files in directory
+# Returns a list of DirectoryEntry objects with information about files in a directory
 # q: Query object
-# base_url: file URLs will be created by appending file path to this URL, shouldn't end with a slash
-# tag: request repository tag
-# path: path to the directory
+# base_url: file URLs will be created by appending file path to this URL. It shouldn't end with a slash
+# tag: requested repository tag
+# path: path to the directory in the repository
 def get_directory_entries(q, base_url, tag, path):
     dir_entries = []
     lines = q.query('dir', tag, path)
@@ -468,10 +468,11 @@ def generate_source_page(q, basedir, parsed_path):
 # Represents a symbol occurrence to be rendered by ident template
 # type: type of the symbol
 # path: path of the file that contains the symbol
-# line: list of tuples line number, URL of the symbol occurrence in the file
+# line: list of tuples (line number, URL of the symbol occurrence in the file)
 SymbolEntry = namedtuple('SymbolEntry', 'type, path, lines')
 
-# Takes a base URL for symbol occurrences and a list of SymbolInstances, returns a list of SymbolEntry
+# Converts SymbolInstance into SymbolEntry
+# path of SymbolInstance will be appended to base_url
 def symbol_instance_to_entry(base_url, symbol):
     # TODO this should be a responsibility of Query
     if type(symbol.line) is str:
@@ -510,10 +511,10 @@ def generate_ident_page(q, basedir, parsed_path):
 
             # TODO this should be a responsibility of Query
             for sym in symbol_definitions:
-                if sym.type in defs_by_type:
-                    defs_by_type[sym.type].append(symbol_instance_to_entry(source_base_url, sym))
-                else:
+                if sym.type not in defs_by_type:
                     defs_by_type[sym.type] = [symbol_instance_to_entry(source_base_url, sym)]
+                else:
+                    defs_by_type[sym.type].append(symbol_instance_to_entry(source_base_url, sym))
 
             symbol_sections.append({
                 'title': 'Defined',
