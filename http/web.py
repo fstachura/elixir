@@ -208,6 +208,14 @@ def route(path, params):
         return (404, "Unknown path")
 
 
+topbar_families = {
+    'A': 'All symbols',
+    'C': 'C/CPP/ASM',
+    'K': 'Kconfig',
+    'D': 'Devicetree',
+    'B': 'DT compatible',
+}
+
 # Returns a list of names of top-level directories in basedir
 def get_directories(basedir):
     directories = []
@@ -452,6 +460,7 @@ def generate_source_page(q, basedir, parsed_path):
 
         'versions': get_versions(q.query('versions'), get_url_with_new_version),
         'projects': get_projects(basedir),
+        'topbar_families': topbar_families,
     }
 
     return (status, template.render(data))
@@ -546,13 +555,14 @@ def generate_ident_page(q, basedir, parsed_path):
         'current_project': project,
         'current_tag': tag,
 
-        'ident': ident,
-        'family': family,
+        'searched_ident': ident,
+        'current_family': family,
 
         'title': ident+' identifier - '+title_suffix,
 
         'projects': get_projects(basedir),
         'versions': get_versions(q.query('versions'), get_url_with_new_version),
+        'topbar_families': topbar_families,
 
         'symbol_sections': symbol_sections,
     }
