@@ -208,6 +208,14 @@ def route(path, params):
         return (404, "Unknown path")
 
 
+TOPBAR_FAMILIES = {
+    'A': 'All symbols',
+    'C': 'C/CPP/ASM',
+    'K': 'Kconfig',
+    'D': 'Devicetree',
+    'B': 'DT compatible',
+}
+
 # Returns a list of names of top-level directories in basedir
 def get_directories(basedir):
     directories = []
@@ -425,7 +433,7 @@ def generate_source_page(q, basedir, parsed_path):
         breadcrumb_links.append((p, f'{ source_base_url }{ path_temp }'))
 
     # Generate title
-    title_suffix = project.capitalize()+' source code ('+version_unquoted+') - Bootlin'
+    title_suffix = f'{ project.capitalize() } source code ({ version_unquoted }) - Bootlin'
 
     # Create titles like this:
     # root path: "Linux source code (v5.5.6) - Bootlin"
@@ -440,7 +448,10 @@ def generate_source_page(q, basedir, parsed_path):
 
     # Create template context
     data = {
-        **template_ctx,
+        'title': title,
+        'projects': get_projects(basedir),
+        'versions': get_versions(q.query('versions'), get_url_with_new_version),
+        'topbar_families': TOPBAR_FAMILIES,
 
         'source_base_url': source_base_url,
         'ident_base_url': f'/{ project }/{ version }/ident',
@@ -448,10 +459,8 @@ def generate_source_page(q, basedir, parsed_path):
         'current_tag': version_unquoted,
 
         'breadcrumb_links': breadcrumb_links,
-        'title': title,
 
-        'versions': get_versions(q.query('versions'), get_url_with_new_version),
-        'projects': get_projects(basedir),
+        **template_ctx,
     }
 
     return (status, template.render(data))
@@ -537,23 +546,23 @@ def generate_ident_page(q, basedir, parsed_path):
         if ident != '':
             status = 404
 
-    title_suffix = project.capitalize()+' source code ('+tag+') - Bootlin'
+    title_suffix = f'{ project.capitalize() } source code { tag } - Bootlin'
 
     get_url_with_new_version = lambda v: stringify_ident_path(parsed_path._replace(version=parse.quote(v, safe='')))
 
     data = {
+        'title': f'{ ident } identifier - { title_suffix }',
+        'projects': get_projects(basedir),
+        'versions': get_versions(q.query('versions'), get_url_with_new_version),
+        'topbar_families': TOPBAR_FAMILIES,
+
         'source_base_url': f'/{ project }/{ version }/source',
         'ident_base_url': f'/{ project }/{ version }/ident',
         'current_project': project,
         'current_tag': tag,
 
-        'ident': ident,
-        'family': family,
-
-        'title': ident+' identifier - '+title_suffix,
-
-        'projects': get_projects(basedir),
-        'versions': get_versions(q.query('versions'), get_url_with_new_version),
+        'searched_ident': ident,
+        'current_family': family,
 
         'symbol_sections': symbol_sections,
     }
