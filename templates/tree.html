@@ -27,11 +27,11 @@
                     </a>
                 </td>
                 <td>
-                {% if size is not none %}
                     <a tabindex="-1" class="size" href="{{ url }}">
+                    {% if size is not none %}
                         {{ size }} bytes
+                    {% endif %}
                     </a>
-                {% endif %}
                 </td>
             </tr>
         {% endfor %}
