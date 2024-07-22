@@ -275,7 +275,7 @@ def get_versions(versions, get_url):
 # Guesses file format based on filename, returns code formatted as HTML
 def format_code(filename, code):
     try:
-        lexer = pygments.lexers.guess_lexer_for_filename(path, code)
+        lexer = pygments.lexers.guess_lexer_for_filename(filename, code)
     except pygments.util.ClassNotFound:
         lexer = pygments.lexers.get_lexer_by_name('text')
 
@@ -356,7 +356,7 @@ def generate_source(q, project, version, path):
         if filter_applies(f, path):
             code = sub(f['prerex'], f['prefunc'], code, flags=re.MULTILINE)
 
-    result = format_code(filename, code)
+    result = format_code(fname, code)
 
     # Replace line numbers by links to the corresponding line in the current file
     result = sub('href="#-(\d+)', 'name="L\\1" id="L\\1" href="#L\\1', result)
@@ -590,7 +590,6 @@ path = os.environ.get('REQUEST_URI') or os.environ.get('SCRIPT_URL')
 request_params = cgi.FieldStorage()
 
 result = route(path, request_params)
-print(result, file=sys.stderr)
 
 if result is not None:
     if result[0] == 200:
