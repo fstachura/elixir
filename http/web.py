@@ -513,12 +513,12 @@ def generate_ident_page(q, basedir, parsed_path):
 
     ident = parsed_path.ident
     version = parsed_path.version
-    tag = parse.unquote(version)
+    version_unquoted = parse.unquote(version)
     family = parsed_path.family
     project = parsed_path.project
     source_base_url = f'/{ project }/{ version }/source'
 
-    symbol_definitions, symbol_references, symbol_doccomments = q.query('ident', tag, ident, family)
+    symbol_definitions, symbol_references, symbol_doccomments = q.query('ident', version_unquoted, ident, family)
 
     symbol_sections = []
 
@@ -572,7 +572,7 @@ def generate_ident_page(q, basedir, parsed_path):
         'source_base_url': f'/{ project }/{ version }/source',
         'ident_base_url': f'/{ project }/{ version }/ident',
         'current_project': project,
-        'current_tag': tag,
+        'current_tag': version_unquoted,
 
         'searched_ident': ident,
         'current_family': family,
