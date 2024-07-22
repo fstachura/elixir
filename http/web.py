@@ -118,7 +118,7 @@ def handle_source_url(path, _):
         print("Error: failed to parse path in handle_source_url", path, file=sys.stderr)
         return (404, get_error_page(basedir, "Failed to parse path"))
 
-    query = get_query(os.environ['LXR_PROJ_DIR'], parsed_path.project)
+    query = get_query(basedir, parsed_path.project)
     if not query:
         return (404, get_error_page(basedir, "Unknown project"))
 
@@ -130,7 +130,7 @@ def handle_source_url(path, _):
         new_parsed_path = parsed_path._replace(version=parse.quote(query.query('latest')))
         return (301, stringify_source_path(new_parsed_path))
 
-    return generate_source_page(query, os.environ['LXR_PROJ_DIR'], parsed_path)
+    return generate_source_page(query, basedir, parsed_path)
 
 
 # Represents a parsed `ident` URL path
