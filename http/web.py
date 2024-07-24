@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+#!/usr/local/elixir/profile.sh
 
 #  This file is part of Elixir, a source code cross-referencer.
 #
@@ -18,10 +19,18 @@
 #  You should have received a copy of the GNU Affero General Public License
 #  along with Elixir.  If not, see <http://www.gnu.org/licenses/>.
 
+import time
+from simple_profiler import SimpleProfiler
+prof = SimpleProfiler()
+
+total_start = time.time_ns()
+
 # prepare a default globals dict to be later used for filter context
 default_globals = {
     **globals(),
 }
+
+import_start = time.time_ns()
 
 import cgi
 import cgitb
@@ -40,6 +49,8 @@ import pygments.formatters
 sys.path = [ sys.path[0] + '/..' ] + sys.path
 from lib import validFamily
 from query import Query, SymbolInstance
+
+prof.add_event('import', time.time_ns() - import_start)
 
 # Returns a Query class instance or None if project data directory does not exist
 # basedir: absolute path to parent directory of all project data directories, ex. "/srv/elixir-data/"
@@ -65,7 +76,8 @@ def get_error_page(ctx, title, details=None):
         template_ctx['error_details'] = details
 
     template = ctx.jinja_env.get_template('error.html')
-    return template.render(template_ctx)
+    with prof.measure_block('template_render'):
+        return template.render(template_ctx)
 
 # Represents a parsed `source` URL path
 # project: name of the project, ex: "musl"
@@ -230,6 +242,7 @@ def get_directories(basedir):
 ProjectEntry = namedtuple('ProjectEntry', 'name, url')
 
 # Returns a list of ProjectEntry tuples of projects stored in directory basedir
+@prof.measure_function('get_projects')
 def get_projects(basedir):
     return [ProjectEntry(p, f"/{p}/latest/source") for p in get_directories(basedir)]
 
@@ -242,6 +255,7 @@ VersionEntry = namedtuple('VersionEntry', 'version, url')
 #   with minor version parts as keys and complete version strings as values
 # get_url: function that takes a version string and returns the URL
 #   for that version. Meaning of the URL can depend on the context
+@prof.measure_function('get_versions')
 def get_versions(versions, get_url):
     result = OrderedDict()
     for major, minor_verions in versions.items():
@@ -261,6 +275,7 @@ def get_versions(versions, get_url):
 # get_url_with_new_version: see get_url parameter of get_versions
 # project: name of the project
 # version: version of the project
+@prof.measure_function('get_layout_template_context')
 def get_layout_template_context(q, ctx, get_url_with_new_version, project, version):
     return {
         'projects': get_projects(ctx.config.project_dir),
@@ -274,15 +289,19 @@ def get_layout_template_context(q, ctx, get_url_with_new_version, project, versi
     }
 
 # Guesses file format based on filename, returns code formatted as HTML
+@prof.measure_function('format_code')
 def format_code(filename, code):
     try:
-        lexer = pygments.lexers.guess_lexer_for_filename(filename, code)
+        with prof.measure_block('guess_lexer_for_filename'):
+            lexer = pygments.lexers.guess_lexer_for_filename(filename, code)
     except pygments.util.ClassNotFound:
         lexer = pygments.lexers.get_lexer_by_name('text')
 
     lexer.stripnl = False
-    formatter = pygments.formatters.HtmlFormatter(linenos=True, anchorlinenos=True)
-    return pygments.highlight(code, lexer, formatter)
+    with prof.measure_block('construct_html_formatter'):
+        formatter = pygments.formatters.HtmlFormatter(linenos=True, anchorlinenos=True)
+    with prof.measure_block('highlight'):
+        return pygments.highlight(code, lexer, formatter)
 
 # Return true if filter can be applied to file based on path of the file
 def filter_applies(filter, path):
@@ -313,6 +332,7 @@ def filter_applies(filter, path):
 # project: name of the requested project
 # version: requested version of the project
 # path: path to the file in the repository
+@prof.measure_function('generate_source')
 def generate_source(q, project, version, path):
     version_unquoted = parse.unquote(version)
     code = q.query('file', version_unquoted, path)
@@ -381,6 +401,7 @@ DirectoryEntry = namedtuple('DirectoryEntry', 'type, name, path, url, size')
 # base_url: file URLs will be created by appending file path to this URL. It shouldn't end with a slash
 # tag: requested repository tag
 # path: path to the directory in the repository
+@prof.measure_function('get_directory_entries')
 def get_directory_entries(q, base_url, tag, path):
     dir_entries = []
     lines = q.query('dir', tag, path)
@@ -420,6 +441,7 @@ def generate_source_page(ctx, q, parsed_path):
     type = q.query('type', version_unquoted, path)
 
     if type == 'tree':
+        prof.set_category('tree')
         back_path = os.path.dirname(path[:-1])
         if back_path == '/':
             back_path = ''
@@ -430,6 +452,7 @@ def generate_source_page(ctx, q, parsed_path):
         }
         template = ctx.jinja_env.get_template('tree.html')
     elif type == 'blob':
+        prof.set_category('blob')
         template_ctx = {
             'code': generate_source(q, project, version, path),
         }
@@ -473,7 +496,8 @@ def generate_source_page(ctx, q, parsed_path):
         **template_ctx,
     }
 
-    return (status, template.render(data))
+    with prof.measure_block('template_render'):
+        return (status, template.render(data))
 
 
 # Represents a symbol occurrence to be rendered by ident template
@@ -504,6 +528,7 @@ def symbol_instance_to_entry(base_url, symbol):
 # parsed_path: ParsedIdentPath
 def generate_ident_page(ctx, q, parsed_path):
     status = 200
+    prof.set_category('ident')
 
     ident = parsed_path.ident
     version = parsed_path.version
@@ -512,45 +537,47 @@ def generate_ident_page(ctx, q, parsed_path):
     project = parsed_path.project
     source_base_url = f'/{ project }/{ version }/source'
 
-    symbol_definitions, symbol_references, symbol_doccomments = q.query('ident', version_unquoted, ident, family)
+    with prof.measure_block('ident_query'):
+        symbol_definitions, symbol_references, symbol_doccomments = q.query('ident', version_unquoted, ident, family)
 
     symbol_sections = []
 
     if len(symbol_definitions) or len(symbol_references):
-        if len(symbol_definitions):
-            defs_by_type = OrderedDict({})
+        with prof.measure_block('ident_preparation'):
+            if len(symbol_definitions):
+                defs_by_type = OrderedDict({})
 
-            # TODO this should be a responsibility of Query
-            for sym in symbol_definitions:
-                if sym.type not in defs_by_type:
-                    defs_by_type[sym.type] = [symbol_instance_to_entry(source_base_url, sym)]
-                else:
-                    defs_by_type[sym.type].append(symbol_instance_to_entry(source_base_url, sym))
+                # TODO this should be a responsibility of Query
+                for sym in symbol_definitions:
+                    if sym.type not in defs_by_type:
+                        defs_by_type[sym.type] = [symbol_instance_to_entry(source_base_url, sym)]
+                    else:
+                        defs_by_type[sym.type].append(symbol_instance_to_entry(source_base_url, sym))
 
-            symbol_sections.append({
-                'title': 'Defined',
-                'symbols': defs_by_type,
-            })
-        else:
-            symbol_sections.append({
-                'message': 'No definitions found in the database',
-            })
+                symbol_sections.append({
+                    'title': 'Defined',
+                    'symbols': defs_by_type,
+                })
+            else:
+                symbol_sections.append({
+                    'message': 'No definitions found in the database',
+                })
 
-        if len(symbol_doccomments):
-            symbol_sections.append({
-                'title': 'Documented',
-                'symbols': {'_unknown': [symbol_instance_to_entry(source_base_url, sym) for sym in symbol_doccomments]},
-            })
+            if len(symbol_doccomments):
+                symbol_sections.append({
+                    'title': 'Documented',
+                    'symbols': {'_unknown': [symbol_instance_to_entry(source_base_url, sym) for sym in symbol_doccomments]},
+                })
 
-        if len(symbol_references):
-            symbol_sections.append({
-                'title': 'Referenced',
-                'symbols': {'_unknown': [symbol_instance_to_entry(source_base_url, sym) for sym in symbol_references]},
-            })
-        else:
-            symbol_sections.append({
-                'message': 'No references found in the database',
-            })
+            if len(symbol_references):
+                symbol_sections.append({
+                    'title': 'Referenced',
+                    'symbols': {'_unknown': [symbol_instance_to_entry(source_base_url, sym) for sym in symbol_references]},
+                })
+            else:
+                symbol_sections.append({
+                    'message': 'No references found in the database',
+                })
 
     else:
         if ident != '':
@@ -568,7 +595,8 @@ def generate_ident_page(ctx, q, parsed_path):
     }
 
     template = ctx.jinja_env.get_template('ident.html')
-    return (status, template.render(data))
+    with prof.measure_block('template_render'):
+        return (status, template.render(data))
 
 
 # Enables cgitb module based on global context
@@ -598,7 +626,7 @@ def get_request_context():
     script_dir = os.path.dirname(os.path.realpath(__file__))
     templates_dir = os.path.join(script_dir, '../templates/')
     loader = jinja2.FileSystemLoader(templates_dir)
-    environment = jinja2.Environment(loader=loader)
+    environment = jinja2.Environment(loader=loader, bytecode_cache=jinja2.FileSystemBytecodeCache('/tmp/jinja-cache'))
 
     path = os.environ.get('REQUEST_URI') or os.environ.get('SCRIPT_URL')
 
@@ -607,6 +635,7 @@ def get_request_context():
 
     return RequestContext(get_config(), environment, path, request_params)
 
+@prof.measure_function('handle_request')
 def handle_request():
     enable_cgitb()
     ctx = get_request_context()
@@ -643,4 +672,6 @@ def handle_request():
 
 if __name__ == '__main__':
     handle_request()
+    prof.set_total(time.time_ns() - total_start)
+    prof.log_to_file("/tmp/elixir-profiler-logs")
 
