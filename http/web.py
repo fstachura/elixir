@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/local/elixir/profile.sh
 
 #  This file is part of Elixir, a source code cross-referencer.
 #
