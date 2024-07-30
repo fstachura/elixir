@@ -359,6 +359,26 @@ def generate_source(q, project, version, path):
         "q": q,
     }
 
+    from filters.utils import FilterContext
+
+    source_base_url = f'/{ project }/{ version }/source'
+
+    def get_ident_url(ident, ident_family=None):
+        if ident_family is None:
+            ident_family = family
+        ident = parse.quote(ident, safe='')
+        return f'/{ project }/{ version }/{ ident_family }/ident/{ ident }'
+
+    new_filter_ctx = FilterContext(
+        q,
+        version_unquoted,
+        family,
+        path,
+        get_ident_url,
+        lambda path: f'{ source_base_url }{ "/" if not path.startswith("/") else "" }{ path }',
+        lambda rel_path: f'{ source_base_url }{ os.path.dirname(path) }/{ rel_path }',
+    )
+
     # Source common filter definitions
     os.chdir('filters')
     exec(open("common.py").read(), filter_ctx)
