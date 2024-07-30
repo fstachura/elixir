@@ -1,28 +1,38 @@
+import re
+from urllib.parse import quote
+from filters.utils import Filter, FilterContext, encode_number, decode_number
+
 # Filter for DT compatible strings in documentation files
+# syscon
+# Example: linux/v6.9.4/source/Documentation/devicetree/bindings/thermal/brcm,avs-ro-thermal.yaml#L17
+# Note that this also finds strings in comments, descriptions and other potentially unrelated properties
+class DtsCompBFilter(Filter):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.dtscompB = []
 
-dtscompB = []
+    def check_if_applies(self, ctx) -> bool:
+        return super().check_if_applies(ctx) and \
+            ctx.query.query('dts-comp') and \
+            ctx.path.startswith('/Documentation/devicetree/bindings')
 
-def keep_dtscompB(m):
-    text = m.group(1)
+    def transform_raw_code(self, ctx, code: str) -> str:
+        def keep_dtscompB(m):
+            text = m.group(1)
 
-    if q.query('dts-comp-exists', parse.quote(text)):
-        dtscompB.append(text)
-        return '__KEEPDTSCOMPB__' + encode_number(len(dtscompB))
-    else:
-        return m.group(0)
+            if ctx.query.query('dts-comp-exists', quote(text)):
+                self.dtscompB.append(text)
+                return f'__KEEPDTSCOMPB__{ encode_number(len(self.dtscompB)) }'
+            else:
+                return m.group(0)
 
-def replace_dtscompB(m):
-    i = dtscompB[decode_number(m.group(1)) - 1]
+        return re.sub('([\w-]+,?[\w-]+)', keep_dtscompB, code, flags=re.MULTILINE)
 
-    return '<a class="ident" href="/'+project+'/'+version+'/B/ident/'+parse.quote(i)+'">'+i+'</a>'
+    def untransform_formatted_code(self, ctx: FilterContext, html: str) -> str:
+        def replace_dtscompB(m):
+            i = self.dtscompB[decode_number(m.group(1)) - 1]
 
-dtscompB_filters = {
-                'case': 'path',
-                'match': {'/Documentation/devicetree/bindings'},
-                'prerex': '([\w-]+,?[\w-]+)',
-                'prefunc': keep_dtscompB,
-                'postrex': '__KEEPDTSCOMPB__([A-J]+)',
-                'postfunc': replace_dtscompB
-                }
+            return f'<a class="ident" href="{ ctx.get_ident_url(i, "B") }">{ i }</a>'
 
-filters.append(dtscompB_filters)
+        return re.sub('__KEEPDTSCOMPB__([A-J]+)', replace_dtscompB, html, flags=re.MULTILINE)
+

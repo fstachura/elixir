@@ -1,29 +1,37 @@
+import re
+from filters.utils import Filter, FilterContext, encode_number, decode_number, extension_matches
+
 # Filter for DT compatible strings in D files
+# compatible = "device"
+# Example: u-boot/v2023.10/source/arch/arm/dts/ac5-98dx35xx-rd.dts#L37
+class DtsCompDFilter(Filter):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.dtscompD = []
 
-dtscompD = []
+    def check_if_applies(self, ctx) -> bool:
+        return super().check_if_applies(ctx) and \
+            ctx.query.query('dts-comp') and \
+            extension_matches(ctx.path, {'dts', 'dtsi'})
 
-def keep_dtscompD(m):
-    match = m.group(0)
-    strings = re.findall("\"(.+?)\"", m.group(1))
+    def transform_raw_code(self, ctx, code: str) -> str:
+        def sub_func(m):
+            match = m.group(0)
+            strings = re.findall("\"(.+?)\"", m.group(1))
 
-    for string in strings:
-        dtscompD.append(string)
-        match = match.replace(string, '__KEEPDTSCOMPD__' + encode_number(len(dtscompD)))
+            for string in strings:
+                self.dtscompD.append(string)
+                match = match.replace(string, '__KEEPDTSCOMPD__' + encode_number(len(self.dtscompD)))
 
-    return match
+            return match
 
-def replace_dtscompD(m):
-    i = dtscompD[decode_number(m.group(1)) - 1]
+        return re.sub('\s*compatible(.*?)$', sub_func, code, flags=re.MULTILINE)
 
-    return '<a class="ident" href="/'+project+'/'+version+'/B/ident/'+parse.quote(i)+'">'+i+'</a>'
+    def untransform_formatted_code(self, ctx: FilterContext, html: str) -> str:
+        def replace_dtscompD(m):
+            i = self.dtscompD[decode_number(m.group(1)) - 1]
 
-dtscompD_filters = {
-                'case': 'extension',
-                'match': {'dts', 'dtsi'},
-                'prerex': '\s*compatible(.*?)$',
-                'prefunc': keep_dtscompD,
-                'postrex': '__KEEPDTSCOMPD__([A-J]+)',
-                'postfunc': replace_dtscompD
-                }
+            return f'<a class="ident" href="{ ctx.get_ident_url(i, "B") }">{ i }</a>'
 
-filters.append(dtscompD_filters)
+        return re.sub('__KEEPDTSCOMPD__([A-J]+)', replace_dtscompD, html, flags=re.MULTILINE)
+

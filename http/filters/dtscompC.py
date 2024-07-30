@@ -1,23 +1,32 @@
+import re
+from filters.utils import Filter, FilterContext, encode_number, decode_number, extension_matches
+
 # Filter for DT compatible strings in C files
+# Finds assigments to properties and variables named 'compatible' and recognized by the Query.query('file')
+# .compatible = "device"
+# Example: u-boot/v2023.10/source/drivers/phy/nop-phy.c#L84
+class DtsCompCFilter(Filter):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.dtscompC = []
 
-dtscompC = []
+    def check_if_applies(self, ctx) -> bool:
+        return super().check_if_applies(ctx) and \
+            ctx.query.query('dts-comp') and \
+            extension_matches(ctx.path, {'c', 'cc', 'cpp', 'c++', 'cxx', 'h', 's'})
 
-def keep_dtscompC(m):
-    dtscompC.append(m.group(4))
-    return m.group(1) + '"__KEEPDTSCOMPC__' + encode_number(len(dtscompC)) + '"'
+    def transform_raw_code(self, ctx, code: str) -> str:
+        def keep_dtscompC(m):
+            self.dtscompC.append(m.group(4))
+            return f'{ m.group(1) }"__KEEPDTSCOMPC__{ encode_number(len(self.dtscompC)) }"'
 
-def replace_dtscompC(m):
-    i = dtscompC[decode_number(m.group(1)) - 1]
+        return re.sub('(\s*{*\s*\.(\033\[31m)?compatible(\033\[0m)?\s*=\s*)\"(.+?)\"', 
+                      keep_dtscompC, code, flags=re.MULTILINE)
 
-    return '<a class="ident" href="/'+project+'/'+version+'/B/ident/'+parse.quote(i)+'">'+i+'</a>'
+    def untransform_formatted_code(self, ctx: FilterContext, html: str) -> str:
+        def replace_dtscompC(m):
+            i = self.dtscompC[decode_number(m.group(1)) - 1]
+            return f'<a class="ident" href="{ ctx.get_ident_url(i, "B") }">{ i }</a>'
 
-dtscompC_filters = {
-                'case': 'extension',
-                'match': {'c', 'cc', 'cpp', 'c++', 'cxx', 'h', 's'},
-                'prerex': '(\s*{*\s*\.(\033\[31m)?compatible(\033\[0m)?\s*=\s*)\"(.+?)\"',
-                'prefunc': keep_dtscompC,
-                'postrex': '__KEEPDTSCOMPC__([A-J]+)',
-                'postfunc': replace_dtscompC
-                }
+        return re.sub('__KEEPDTSCOMPC__([A-J]+)', replace_dtscompC, html, flags=re.MULTILINE)
 
-filters.append(dtscompC_filters)
