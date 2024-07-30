@@ -390,8 +390,12 @@ def generate_source(q, project, version, path):
     os.chdir('..')
 
     filters = filter_ctx["filters"]
+    new_filters = [f for f in filter_ctx["new_filters"] if f.check_if_applies(new_filter_ctx, path)]
 
     # Apply filters
+    for f in new_filters:
+        code = f.transform_raw_code(new_filter_ctx, code)
+
     for f in filters:
         if filter_applies(f, path):
             code = sub(f['prerex'], f['prefunc'], code, flags=re.MULTILINE)
@@ -404,6 +408,9 @@ def generate_source(q, project, version, path):
     for f in filters:
         if filter_applies(f, path):
             html_code_block = sub(f['postrex'], f['postfunc'], html_code_block)
+
+    for f in new_filters:
+        html_code_block = f.untransform_formatted_code(new_filter_ctx, html_code_block)
 
     return html_code_block
 
