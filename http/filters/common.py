@@ -4,6 +4,7 @@ from filters.ident import IdentFilter
 from filters.dtscompB import DtsCompBFilter
 from filters.dtscompC import DtsCompCFilter
 from filters.dtscompD import DtsCompDFilter
+from filters.cppinc import CppIncFilter
 
 new_filters = [
     IdentFilter(),
@@ -16,5 +17,6 @@ if dts_comp_support:
         DtsCompDFilter(),
     ] + new_filters
 
+new_filters.append(CppIncFilter())
+
 filters = []
-exec(open('cppinc.py').read())

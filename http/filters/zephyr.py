@@ -2,7 +2,19 @@
 
 from filters.dtsi import DtsiFilter
 
-new_filters.append(DtsiFilter())
+from filters.cpppathinc import CppPathIncFilter
 
-exec(open('commonkconfig.py').read())
-exec(open('cpppathinc.py').read())
+from filters.kconfig import KconfigFilter
+from filters.kconfigidents import KconfigIdentsFilter
+from filters.defconfig import DefConfigIdentsFilter
+
+new_filters.extend([
+    DtsiFilter(),
+
+    CppPathIncFilter(),
+
+    KconfigFilter(),
+    KconfigIdentsFilter(),
+    DefConfigIdentsFilter(),
+])
+

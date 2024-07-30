@@ -1,3 +1,7 @@
 # Elixir Python definitions for Barebox
 
-exec(open('makefilesubdir.py').read())
+from filters.makefilesubdir import MakefileSubdirFilter
+
+new_filters.extend([
+    MakefileSubdirFilter(),
+])

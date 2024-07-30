@@ -1,18 +1,35 @@
 # Elixir Python definitions for Linux
 
 from filters.dtsi import DtsiFilter
+from filters.cpppathinc import CppPathIncFilter
 
-new_filters.append(DtsiFilter())
+from filters.kconfig import KconfigFilter
+from filters.kconfigidents import KconfigIdentsFilter
+from filters.defconfig import DefConfigIdentsFilter
 
-exec(open('commonkconfig.py').read())
-exec(open('makefileo.py').read())
-exec(open('makefiledtb.py').read())
-exec(open('makefiledir.py').read())
-exec(open('makefilefile.py').read())
-exec(open('makefilesubdir.py').read())
-exec(open('makefilesrctree.py').read())
+from filters.makefileo import MakefileOFilter
+from filters.makefiledtb import MakefileDtbFilter
+from filters.makefiledir import MakefileDirFilter
+from filters.makefilesubdir import MakefileSubdirFilter
+from filters.makefilefile import MakefileFileFilter
+from filters.makefilesrctree import MakefileSrcTreeFilter
 
-exec(open('cpppathinc.py').read())
+new_filters.extend([
+    DtsiFilter(),
+
+    KconfigFilter(),
+    KconfigIdentsFilter(),
+    DefConfigIdentsFilter(),
+
+    MakefileOFilter(),
+    MakefileDtbFilter(),
+    MakefileDirFilter(),
+    MakefileSubdirFilter(),
+    MakefileFileFilter(),
+    MakefileSrcTreeFilter(),
+
 # include/uapi contains includes to user headers under #ifndef __KERNEL__
 # Our solution is to ignore all includes in such paths
-cpppathinc_filters['path_exceptions'] = {'^/include/uapi/.*'}
+    CppPathIncFilter(path_exceptions={'^/include/uapi/.*'}),
+])
+
