@@ -18,10 +18,19 @@
 #  You should have received a copy of the GNU Affero General Public License
 #  along with Elixir.  If not, see <http://www.gnu.org/licenses/>.
 
-import cgi
-from urllib import parse
-import sys
-import os
+import time
+from bsddb3.db import DB_SET_RANGE
+from simple_profiler import SimpleProfiler
+
+prof = SimpleProfiler()
+
+request_start = time.time_ns()
+
+with prof.measure_block("imports"):
+    import cgi
+    from urllib import parse
+    import sys
+    import os
 
 # Get values from http GET
 form = cgi.FieldStorage()
@@ -34,10 +43,12 @@ basedir = os.environ['LXR_PROJ_DIR']
 datadir = basedir + '/' + query_project + '/data'
 repodir = basedir + '/' + query_project + '/repo'
 
-# Import query
-sys.path = [ sys.path[0] + '/..' ] + sys.path
-from query import Query
-q = Query(datadir, repodir)
+with prof.measure_block("query_init"):
+    # Import query
+    sys.path = [ sys.path[0] + '/..' ] + sys.path
+    from query import Query
+    from lib import autoBytes
+    q = Query(datadir, repodir)
 
 # Create tmp directory for autocomplete
 tmpdir = '/tmp/autocomplete/' + query_project
@@ -50,42 +61,70 @@ latest = q.query('latest')
 if query_family == 'B':
     name = 'comps'
     process = lambda x: parse.unquote(x)
+    db = q.db.comps
 else:
     name = 'defs'
     process = lambda x: x
+    db = q.db.defs
 
 # Init values for tmp files
-filename = tmpdir + '/' + name
-mode = 'r+' if os.path.exists(filename) else 'w+'
+#filename = tmpdir + '/' + name
+#mode = 'r+' if os.path.exists(filename) else 'w+'
 
+"""
 # Open tmp file
 # Fill it with the keys of the database only
 # if the file is older than the database
 f = open(filename, mode)
 if not f.readline()[:-1] == latest:
-    f.seek(0)
-    f.truncate()
-    f.write(latest + "\n")
-    f.write('\n'.join([process(x.decode()) for x in q.query('keys', name)]))
-    f.seek(0)
-    f.readline() # Skip first line that store the version number
+    with prof.measure_block("tmp_write"):
+        prof.set_category(f"tmp_write_{query_project}")
+        f.seek(0)
+        f.truncate()
+        f.write(latest + "\n")
+        f.write('\n'.join([process(x.decode()) for x in q.query('keys', name)]))
+        f.seek(0)
+        f.readline() # Skip first line that store the version number
+else:
+    prof.set_category(f"no_tmp_write_{query_project}")
+"""
+
+prof.set_category(f"improved_{query_project}")
 
 # Prepare http response
 response = 'Content-Type: text/html;charset=utf-8\n\n[\n'
 
-# Search for the 10 first matching elements in the tmp file
-index = 0
-for i in f:
-    if i.startswith(query_string):
-        response += '"' + i[:-1] + '",'
-        index += 1
-
-    if index == 10:
+i = 0
+cur = db.db.cursor()
+query_bytes = autoBytes(query_string)
+key, _ = cur.get(query_bytes, DB_SET_RANGE)
+while i <= 10:
+    if key.startswith(query_bytes):
+        i += 1
+        response += '"' + key.decode("utf-8") + '",'
+        key, _ = cur.next()
+    else:
         break
+
+"""
+with prof.measure_block("search"):
+    # Search for the 10 first matching elements in the tmp file
+    index = 0
+    for i in f:
+        if i.startswith(query_string):
+            response += '"' + i[:-1] + '",'
+            index += 1
+
+        if index == 10:
+            break
+"""
 
 # Complete and send response
 response = response[:-1] + ']'
 print(response)
 
 # Close tmp file
-f.close()
+#f.close()
+
+prof.set_total(time.time_ns() - request_start)
+prof.log_to_file("/tmp/elixir-autocomplete-profiler")
