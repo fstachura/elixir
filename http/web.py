@@ -22,6 +22,7 @@
 import time
 from simple_profiler import SimpleProfiler
 prof = SimpleProfiler()
+prof.add_tag('cgi')
 
 total_start = time.time_ns()
 
@@ -431,6 +432,7 @@ def get_directory_entries(q, base_url, tag, path):
 # parsed_path: ParsedSourcePath
 def generate_source_page(ctx, q, parsed_path):
     status = 200
+    prof.add_tag('source')
 
     project = parsed_path.project
     version = parsed_path.version
@@ -441,7 +443,7 @@ def generate_source_page(ctx, q, parsed_path):
     type = q.query('type', version_unquoted, path)
 
     if type == 'tree':
-        prof.set_category('tree')
+        prof.add_tag('tree')
         back_path = os.path.dirname(path[:-1])
         if back_path == '/':
             back_path = ''
@@ -452,7 +454,7 @@ def generate_source_page(ctx, q, parsed_path):
         }
         template = ctx.jinja_env.get_template('tree.html')
     elif type == 'blob':
-        prof.set_category('blob')
+        prof.add_tag('blob')
         template_ctx = {
             'code': generate_source(q, project, version, path),
         }
@@ -528,7 +530,7 @@ def symbol_instance_to_entry(base_url, symbol):
 # parsed_path: ParsedIdentPath
 def generate_ident_page(ctx, q, parsed_path):
     status = 200
-    prof.set_category('ident')
+    prof.add_tag('ident')
 
     ident = parsed_path.ident
     version = parsed_path.version
@@ -640,6 +642,8 @@ def handle_request():
     enable_cgitb()
     ctx = get_request_context()
     result = route(ctx)
+    prof.set_total(time.time_ns() - total_start)
+    prof.log_to_file("/tmp/elixir-profiler-logs")
 
     if result is not None:
         if result[0] == 200:
@@ -672,6 +676,4 @@ def handle_request():
 
 if __name__ == '__main__':
     handle_request()
-    prof.set_total(time.time_ns() - total_start)
-    prof.log_to_file("/tmp/elixir-profiler-logs")
 
