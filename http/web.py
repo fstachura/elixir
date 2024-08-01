@@ -22,12 +22,12 @@ import cgi
 import cgitb
 import logging
 import os
-import re
 import sys
+import time
+import re
 from collections import OrderedDict, namedtuple
 from re import search, sub
 from urllib import parse
-import jinja2
 
 ELIXIR_DIR = os.path.dirname(os.path.realpath(__file__)) + '/..'
 
@@ -39,11 +39,17 @@ HTTP_DIR = os.path.dirname(os.path.realpath(__file__))
 if HTTP_DIR not in sys.path:
     sys.path = [ HTTP_DIR ] + sys.path
 
+import jinja2
+import pygments
+import pygments.lexers
+import pygments.formatters
+
 from lib import validFamily
 from query import Query, SymbolInstance
 from filters import get_filters
 from filters.utils import FilterContext
 
+from simple_profiler import SimpleProfiler
 
 # Returns a Query class instance or None if project data directory does not exist
 # basedir: absolute path to parent directory of all project data directories, ex. "/srv/elixir-data/"
@@ -99,14 +105,15 @@ def redirect_on_trailing_slash(path):
 def handle_source_url(ctx):
     status = redirect_on_trailing_slash(ctx.path)
     if status is not None:
-        return status
+            return status
 
     parsed_path = parse_source_path(ctx.path)
     if parsed_path is None:
         ctx.config.logger.error("Error: failed to parse path in handle_source_url %s", ctx.path)
         return (404, get_error_page(ctx, "Failed to parse path"))
 
-    query = get_query(ctx.config.project_dir, parsed_path.project)
+    with ctx.prof.measure_block("get_query"):
+        query = get_query(ctx.config.project_dir, parsed_path.project)
     if not query:
         return (404, get_error_page(ctx, "Unknown project"))
 
@@ -184,7 +191,8 @@ def handle_ident_url(ctx):
     if status is not None:
         return status
 
-    query = get_query(ctx.config.project_dir, parsed_path.project)
+    with ctx.prof.measure_block("get_query"):
+        query = get_query(ctx.config.project_dir, parsed_path.project)
     if not query:
         return (404, get_error_page(ctx, "Unknown project."))
 
@@ -276,13 +284,10 @@ def get_layout_template_context(q, ctx, get_url_with_new_version, project, versi
     }
 
 # Guesses file format based on filename, returns code formatted as HTML
-def format_code(filename, code):
-    import pygments
-    import pygments.lexers
-    import pygments.formatters
-
+def format_code(filename, code, ctx):
     try:
-        lexer = pygments.lexers.guess_lexer_for_filename(filename, code)
+        with ctx.prof.measure_block("guess_lexer"):
+            lexer = pygments.lexers.guess_lexer_for_filename(filename, code)
     except pygments.util.ClassNotFound:
         lexer = pygments.lexers.get_lexer_by_name('text')
 
@@ -295,7 +300,7 @@ def format_code(filename, code):
 # project: name of the requested project
 # version: requested version of the project
 # path: path to the file in the repository
-def generate_source(q, project, version, path):
+def generate_source(q, project, version, path, ctx):
     version_unquoted = parse.unquote(version)
     code = q.query('file', version_unquoted, path)
 
@@ -328,7 +333,8 @@ def generate_source(q, project, version, path):
     for f in filters:
         code = f.transform_raw_code(filter_ctx, code)
 
-    html_code_block = format_code(fname, code)
+    with ctx.prof.measure_block("format_code"):
+        html_code_block = format_code(fname, code, ctx)
 
     # Replace line numbers by links to the corresponding line in the current file
     html_code_block = sub('href="#-(\d+)', 'name="L\\1" id="L\\1" href="#L\\1', html_code_block)
@@ -381,6 +387,7 @@ def get_directory_entries(q, base_url, tag, path):
 # parsed_path: ParsedSourcePath
 def generate_source_page(ctx, q, parsed_path):
     status = 200
+    ctx.prof.add_tag('source')
 
     project = parsed_path.project
     version = parsed_path.version
@@ -391,6 +398,7 @@ def generate_source_page(ctx, q, parsed_path):
     type = q.query('type', version_unquoted, path)
 
     if type == 'tree':
+        ctx.prof.add_tag('tree')
         back_path = os.path.dirname(path[:-1])
         if back_path == '/':
             back_path = ''
@@ -399,18 +407,22 @@ def generate_source_page(ctx, q, parsed_path):
             'dir_entries': get_directory_entries(q, source_base_url, version_unquoted, path),
             'back_url': f'{ source_base_url }{ back_path }' if path != '' else None,
         }
-        template = ctx.jinja_env.get_template('tree.html')
+        with ctx.prof.measure_block("jinja_get"):
+            template = ctx.jinja_env.get_template('tree.html')
     elif type == 'blob':
+        ctx.prof.add_tag('blob')
         template_ctx = {
-            'code': generate_source(q, project, version, path),
+            'code': generate_source(q, project, version, path, ctx),
         }
-        template = ctx.jinja_env.get_template('source.html')
+        with ctx.prof.measure_block("jinja_get"):
+            template = ctx.jinja_env.get_template('source.html')
     else:
         status = 404
         template_ctx = {
             'error_title': 'This file does not exist.',
         }
-        template = ctx.jinja_env.get_template('error.html')
+        with ctx.prof.measure_block("jinja_get"):
+            template = ctx.jinja_env.get_template('error.html')
 
 
     # Generate breadcrumbs
@@ -444,7 +456,8 @@ def generate_source_page(ctx, q, parsed_path):
         **template_ctx,
     }
 
-    return (status, template.render(data))
+    with ctx.prof.measure_block("jinja_render"):
+        return (status, template.render(data))
 
 # Represents line in a file with URL to that line
 LineWithURL = namedtuple('LineWithURL', 'lineno, url')
@@ -477,6 +490,7 @@ def symbol_instance_to_entry(base_url, symbol):
 # parsed_path: ParsedIdentPath
 def generate_ident_page(ctx, q, parsed_path):
     status = 200
+    ctx.prof.add_tag("ident")
 
     ident = parsed_path.ident
     version = parsed_path.version
@@ -540,8 +554,11 @@ def generate_ident_page(ctx, q, parsed_path):
         'symbol_sections': symbol_sections,
     }
 
-    template = ctx.jinja_env.get_template('ident.html')
-    return (status, template.render(data))
+    with ctx.prof.measure_block("jinja_get"):
+        template = ctx.jinja_env.get_template('ident.html')
+
+    with ctx.prof.measure_block("jinja_render"):
+        return (status, template.render(data))
 
 # Enables cgitb module based on global context
 def enable_cgitb():
@@ -563,7 +580,7 @@ def get_config(environ):
 
 # Basic information about handled request - current Elixir configuration, configured Jinja environment,
 # request path and parameters
-RequestContext = namedtuple('RequestContext', 'config, jinja_env, path, params')
+RequestContext = namedtuple('RequestContext', 'config, jinja_env, path, params, prof', defaults=[None, None, None, None, None])
 
 # Builds a RequestContext instance from global context
 def get_request_context(environ):
@@ -580,8 +597,14 @@ def get_request_context(environ):
     return RequestContext(get_config(environ), environment, path, request_params)
 
 def application(environ, start_response):
+    prof = SimpleProfiler()
+    prof.add_tag("wsgi")
+
+    request_start = time.time_ns()
+
     enable_cgitb()
     ctx = get_request_context(environ)
+    ctx = ctx._replace(prof=prof)
     result = route(ctx)
     headers = []
     response = b""
@@ -617,5 +640,8 @@ def application(environ, start_response):
         response = b'Unknown error - check error logs for details\n'
 
     start_response(status, headers)
+
+    prof.set_total(time.time_ns() - request_start)
+    prof.log_to_file("/tmp/elixir-profiler-logs")
     return [response]
 

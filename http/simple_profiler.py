@@ -15,10 +15,10 @@ class SimpleProfiler:
 
     def __init__(self):
         self.timed_events = {}
-        self.category = "unknown"
+        self.tags = []
 
-    def set_category(self, category):
-        self.category = category
+    def add_tag(self, category):
+        self.tags.append(category)
 
     def set_total(self, total):
         self.total = total
@@ -44,6 +44,6 @@ class SimpleProfiler:
 
     def log_to_file(self, filename):
         with open(filename, "a") as f:
-            f.write(json.dumps({'category': self.category, 'total': self.total, 'events': self.timed_events}))
+            f.write(json.dumps({'tags': self.tags, 'total': self.total, 'events': self.timed_events}))
             f.write("\n")
 
