@@ -29,7 +29,16 @@ from re import search, sub
 from urllib import parse
 import jinja2
 
-sys.path = [ sys.path[0] + '/..' ] + sys.path
+ELIXIR_DIR = os.path.dirname(os.path.realpath(__file__)) + '/..'
+
+if ELIXIR_DIR not in sys.path:
+    sys.path = [ ELIXIR_DIR ] + sys.path
+
+HTTP_DIR = os.path.dirname(os.path.realpath(__file__))
+
+if HTTP_DIR not in sys.path:
+    sys.path = [ HTTP_DIR ] + sys.path
+
 from lib import validFamily
 from query import Query, SymbolInstance
 from filters import get_filters
@@ -549,62 +558,64 @@ def enable_cgitb():
 Config = namedtuple('Config', 'project_dir, logger')
 
 # Builds a Config instance from global context
-def get_config():
-    return Config(os.environ['LXR_PROJ_DIR'], logging.getLogger(__name__))
+def get_config(environ):
+    return Config(environ['LXR_PROJ_DIR'], logging.getLogger(__name__))
 
 # Basic information about handled request - current Elixir configuration, configured Jinja environment,
 # request path and parameters
 RequestContext = namedtuple('RequestContext', 'config, jinja_env, path, params')
 
 # Builds a RequestContext instance from global context
-def get_request_context():
+def get_request_context(environ):
     script_dir = os.path.dirname(os.path.realpath(__file__))
     templates_dir = os.path.join(script_dir, '../templates/')
     loader = jinja2.FileSystemLoader(templates_dir)
     environment = jinja2.Environment(loader=loader)
 
-    path = os.environ.get('REQUEST_URI') or os.environ.get('SCRIPT_URL')
+    path = environ.get('REQUEST_URI') or environ.get('SCRIPT_URL')
 
     # parses and stores request parameters, both query string and POST request form
     request_params = cgi.FieldStorage()
 
-    return RequestContext(get_config(), environment, path, request_params)
+    return RequestContext(get_config(environ), environment, path, request_params)
 
-def handle_request():
+def application(environ, start_response):
     enable_cgitb()
-    ctx = get_request_context()
+    ctx = get_request_context(environ)
     result = route(ctx)
+    headers = []
+    response = b""
 
     if result is not None:
         if result[0] == 200:
-            print('Content-Type: text/html;charset=utf-8\n')
-            print(result[1], end='')
+            status = '200 OK'
+            headers.append(('Content-Type', 'text/html;charset=utf-8'))
+            response = result[1].encode("utf-8")
         elif result[0] == 301:
-            print('Status: 301 Moved Permanently')
-            print('Location: '+ result[1] +'\n')
+            status = '301 Moved Permanently'
+            response = result[1].encode("utf-8")
         elif result[0] == 302:
-            print('Status: 302 Found')
-            print('Location: '+ result[1] +'\n')
+            status = '302 Found'
+            headers.append(('Location', result[1]))
         elif result[0] == 400:
-            print('Status: 400 Bad Request')
-            print('Content-Type: text/html;charset=utf-8\n')
-            print(result[1], end='')
+            status = '400 Bad Request'
+            headers.append(('Content-Type', 'text/html;charset=utf-8'))
+            response = result[1].encode("utf-8")
         elif result[0] == 404:
-            print('Status: 404 Not Found')
-            print('Content-Type: text/html;charset=utf-8\n')
-            print(result[1], end='')
+            status = '404 Not Found'
+            headers.append(('Content-Type', 'text/html;charset=utf-8'))
+            response = result[1].encode("utf-8")
         else:
-            print('Status: 500 Internal Server Error')
-            print('Content-Type: text/html;charset=utf-8\n')
+            status = '500 Internal Server Error'
+            headers.append(('Content-Type', 'text/html;charset=utf-8'))
             ctx.config.logger.error('Error - route returned an unknown status code %s', str(result))
-            print('Unknown error - check error logs for details\n')
+            response = b'Unknown error - check error logs for details\n'
     else:
-        print('Status: 500 Internal Server Error')
-        print('Content-Type: text/html;charset=utf-8\n')
+        status = '500 Internal Server Error'
+        headers.append(('Content-Type', 'text/html;charset=utf-8'))
         ctx.config.logger.error('Error - route returned None')
-        print('Unknown error - check error logs for details\n')
+        response = b'Unknown error - check error logs for details\n'
 
-
-if __name__ == '__main__':
-    handle_request()
+    start_response(status, headers)
+    return [response]
 
