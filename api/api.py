@@ -57,17 +57,18 @@ class IdentGetter:
             family = 'C'
 
         symbol_definitions, symbol_references, symbol_doccomments = q.query('ident', version, ident, family)
-        resp.body = json.dumps(
+        resp.text = json.dumps(
             {
                 'definitions': [sym.__dict__ for sym in symbol_definitions],
                 'references': [sym.__dict__ for sym in symbol_references],
                 'documentations': [sym.__dict__ for sym in symbol_doccomments]
             })
+        resp.content_type = falcon.MEDIA_JSON
         resp.status = falcon.HTTP_200
         q.close()
 
 def create_ident_getter():
-    application = falcon.API()
+    application = falcon.App()
     idents = IdentGetter()
     application.add_route('/ident/{project}/{ident}', idents)
     return application
