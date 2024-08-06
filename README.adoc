@@ -80,7 +80,7 @@ For Debian
 ____
 
 ----
-sudo apt install python3-jinja2 python3-bsddb3 python3-falcon python3-pytest python3-pygments universal-ctags perl git apache2 libapache2-mod-wsgi-py3 libjansson4
+sudo apt install python3-pip python3-venv python3-bsddb3 universal-ctags perl git apache2 libapache2-mod-wsgi-py3 libjansson4
 ----
 
 To enable the REST API, follow the installation instructions on https://github.com/GrahamDumpleton/mod_wsgi[`mod_wsgi`]
@@ -94,6 +94,14 @@ to know what packages Elixir needs in your favorite distribution.
 ----
 git clone https://github.com/bootlin/elixir.git /usr/local/elixir/
 ----
+
+== Create a virtualenv for Elixir
+
+---
+python -m venv --system-site-packages /usr/local/elixir/venv
+. /usr/local/elixir/venv/bin/activate
+pip install -r /usr/local/elixir/requirements.txt
+---
 
 == Create Directory
 
@@ -156,6 +164,7 @@ cd /usr/local/elixir/
 == Create Database
 
 ----
+. ./venv/bin/activate
 ./update.py <number of threads>
 ----
 
@@ -171,6 +180,7 @@ Verify that the queries work:
  $ ./query.py v4.10 file /kernel/sched/clock.c
 
 NOTE: `v4.10` can be replaced with any other tag.
+NOTE: Don't forget to activate the virtual environment!
 
 == Configure httpd
 
@@ -198,7 +208,6 @@ Note: If using apache2 (Ubuntu/Debian) instead of httpd (RedHat/Centos),
 the default config file to edit is: `/etc/apache2/sites-enabled/000-default.conf`
 
 ----
-# Required for HTTP
 <Directory /usr/local/elixir/http/>
     Options +ExecCGI
     AllowOverride None
@@ -206,29 +215,24 @@ the default config file to edit is: `/etc/apache2/sites-enabled/000-default.conf
     SetEnv PYTHONIOENCODING utf-8
     SetEnv LXR_PROJ_DIR /path/elixir-data
 </Directory>
-
-# Required for the REST API
 <Directory /usr/local/elixir/api/>
     SetHandler wsgi-script
     Require all granted
     SetEnv PYTHONIOENCODING utf-8
     SetEnv LXR_PROJ_DIR /path/elixir-data
 </Directory>
-
-AddHandler cgi-script .py
-#Listen 80
 <VirtualHost *:80>
-    ServerName xxx
+    ServerName MY_LOCAL_IP
     DocumentRoot /usr/local/elixir/http
 
-    # To enable REST api after installing mod_wsgi: Fill path and uncomment:
-    #WSGIScriptAlias /api /usr/local/elixir/api/api.py
+    WSGIScriptAlias /api /usr/local/elixir/api/api.py
+    WSGIDaemonProcess Elixir processes=4 threads=4 display-name=%{GROUP} python-home=/usr/local/elixir/venv/
+    WSGIProcessGroup Elixir
+    WSGIScriptAliasMatch "^(/(?!api|acp).*/(source|ident|search))" /usr/local/elixir/http/web.py/$1
 
     AllowEncodedSlashes On
-
     RewriteEngine on
     RewriteRule "^/$" "/linux/latest/source" [R]
-    RewriteRule "^/(?!api|acp).*/(source|ident|search)" "/web.py" [PT]
     RewriteRule "^/acp" "/autocomplete.py" [PT]
 </VirtualHost>
 ----
@@ -401,7 +405,7 @@ into `/usr/local/elixir/` in the container when running `docker run elixir`.
 
 Changes in the code made on the host should be automatically reflected in the container.
 You can use `apache2ctl` to restart Apache.
-Error logs are available in `/var/log/apache2/error.log` and `/tmp/elixir-errors` within the container.
+Error logs are available in `/var/log/apache2/error.log` within the container.
 
 = Hardware requirements
 
