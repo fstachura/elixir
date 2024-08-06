@@ -64,7 +64,7 @@ class AutocompleteResource:
         # Search for the 10 first matching elements in the tmp file
         i = 0
         cur = db.db.cursor()
-        query_bytes = autoBytes(query_string)
+        query_bytes = autoBytes(parse.quote(query_string))
         key, _ = cur.get(query_bytes, DB_SET_RANGE)
         while i <= 10:
             if key.startswith(query_bytes):

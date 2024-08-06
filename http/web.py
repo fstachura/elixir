@@ -155,7 +155,7 @@ class IdentResource(IdentPostRedirectResource):
             return
 
         # Check if identifier contains only allowed characters
-        if not ident or not search('^[A-Za-z0-9_\$\.%-]*$', ident):
+        if not ident or not search('^[A-Za-z0-9_\$\.,-]*$', ident):
             resp.status = falcon.HTTP_BAD_REQUEST
             resp.content_type = falcon.MEDIA_HTML
             resp.text = get_error_page(ctx, "Identifier is invalid.")
