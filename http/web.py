@@ -71,15 +71,11 @@ def get_error_page(ctx, title, details=None):
     return template.render(template_ctx)
 
 
-# Represents a parsed `source` URL path
-# project: name of the project, ex: "musl"
-# version: tagged commit of the project, ex: "v1.2.5"
-# path: path to the requested file, starts with a slash, ex: "/src/prng/lrand48.c"
-ParsedSourcePath = namedtuple('ParsedSourcePath', 'project, version, path')
-
 # Converts ParsedSourcePath to a string with corresponding URL path
-def stringify_source_path(ppath):
-    path = f'/{ppath.project}/{ppath.version}/source{ppath.path}'
+def stringify_source_path(project, version, path):
+    if not path.startswith('/'):
+        path = '/' + path
+    path = f'/{ project }/{ version }/source{ path }'
     return path.rstrip('/')
 
 class SourceResource:
@@ -87,13 +83,12 @@ class SourceResource:
         if not path.startswith('/') and len(path) != 0:
             path = f'/{ path }'
 
-        parsed_path = ParsedSourcePath(project, version, path)
         if path.endswith('/'):
-            raise falcon.HTTPFound(stringify_source_path(parsed_path._replace(path=path.rstrip('/'))))
+            raise falcon.HTTPFound(stringify_source_path(project, version, path))
 
-        ctx = get_request_context(req.env, req.path, req.params)
+        ctx = get_request_context(req.env)
 
-        query = get_query(ctx.config.project_dir, parsed_path.project)
+        query = get_query(ctx.config.project_dir, project)
         if not query:
             resp.status = falcon.HTTP_NOT_FOUND
             resp.content_type = falcon.MEDIA_HTML
@@ -101,34 +96,28 @@ class SourceResource:
             return
 
         # Check if path contains only allowed characters
-        if not search('^[A-Za-z0-9_/.,+-]*$', parsed_path.path):
+        if not search('^[A-Za-z0-9_/.,+-]*$', path):
             resp.status = falcon.HTTP_BAD_REQUEST
             resp.content_type  = falcon.MEDIA_HTML
             resp.text = get_error_page(ctx, "Path contains characters that are not allowed.")
             return
 
-        if parsed_path.version == 'latest':
-            new_parsed_path = parsed_path._replace(version=parse.quote(query.query('latest')))
-            raise falcon.HTTPFound(stringify_source_path(new_parsed_path))
+        if version == 'latest':
+            version = parse.quote(query.query('latest'))
+            raise falcon.HTTPFound(stringify_source_path(project, version, path))
 
         resp.content_type = falcon.MEDIA_HTML
-        resp.status, resp.text = generate_source_page(ctx, query, parsed_path)
+        resp.status, resp.text = generate_source_page(ctx, query, project, version, path)
 
 
 class SourceWithoutPathResource(SourceResource):
     def on_get(self, req, resp, project, version):
         return super().on_get(req, resp, project, version, '')
 
-# Represents a parsed `ident` URL path
-# project: name of the project, ex: musl
-# version: tagged commit of the project, ex: v1.2.5
-# family: searched symbol family, replaced with C if unknown, ex: A
-# ident: searched identificator, ex: fpathconf
-ParsedIdentPath = namedtuple('ParsedIdentPath', 'project, version, family, ident')
 
 # Converts ParsedIdentPath to a string with corresponding URL path
-def stringify_ident_path(ppath):
-    path = f'/{ppath.project}/{ppath.version}/{ppath.family}/ident/{ppath.ident}'
+def stringify_ident_path(project, version, family, ident):
+    path = f'/{ project }/{ version }/{ family }/ident/{ ident }'
     return path.rstrip('/')
 
 class IdentResource:
@@ -142,16 +131,9 @@ class IdentResource:
         if not validFamily(family):
             family = 'C'
 
-        parsed_path = ParsedIdentPath(
-            project,
-            version,
-            family,
-            ident,
-        )
+        ctx = get_request_context(req.env)
 
-        ctx = get_request_context(req.env, req.path, req.params)
-
-        query = get_query(ctx.config.project_dir, parsed_path.project)
+        query = get_query(ctx.config.project_dir, project)
         if not query:
             resp.status = falcon.HTTP_NOT_FOUND
             resp.content_type = falcon.MEDIA_HTML
@@ -159,18 +141,18 @@ class IdentResource:
             return
 
         # Check if identifier contains only allowed characters
-        if not parsed_path.ident or not search('^[A-Za-z0-9_\$\.%-]*$', parsed_path.ident):
+        if not ident or not search('^[A-Za-z0-9_\$\.%-]*$', ident):
             resp.status = falcon.HTTP_BAD_REQUEST
             resp.content_type = falcon.MEDIA_HTML
             resp.text = get_error_page(ctx, "Identifier is invalid.")
             return
 
-        if parsed_path.version == 'latest':
-            new_parsed_path = parsed_path._replace(version=parse.quote(query.query('latest')))
-            raise falcon.HTTPFound(stringify_ident_path(new_parsed_path))
+        if version == 'latest':
+            version = parse.quote(query.query('latest'))
+            raise falcon.HTTPFound(stringify_ident_path(project, version, family, ident))
 
         resp.content_type = falcon.MEDIA_HTML
-        resp.status, resp.text = generate_ident_page(ctx, query, parsed_path)
+        resp.status, resp.text = generate_ident_page(ctx, query, project, version, family, ident)
 
 class IdentWithoutFamilyResource(IdentResource):
     def on_get(self, req, resp, project, version, ident):
@@ -179,17 +161,13 @@ class IdentWithoutFamilyResource(IdentResource):
 class IdentPostRedirectResource:
     def on_post(self, req, resp, project, version):
         form = req.get_media()
-        parsed_path = ParsedIdentPath(project, version, '', '')
         post_ident = form.get('i')
         post_family = str(form.get('f')).upper()
 
         if post_ident:
             post_ident = parse.quote(post_ident.strip(), safe='/')
-            new_parsed_path = parsed_path._replace(
-                family=post_family,
-                ident=post_ident
-            )
-            raise falcon.HTTPFound(stringify_ident_path(new_parsed_path))
+            new_path = stringify_ident_path(project, version, post_family, post_ident)
+            raise falcon.HTTPFound(new_path)
         else:
             raise falcon.HTTPInternalServerError()
 
@@ -295,7 +273,7 @@ def generate_source(q, project, version, path):
         if ident_family is None:
             ident_family = family
         ident = parse.quote(ident, safe='')
-        return f'/{ project }/{ version }/{ ident_family }/ident/{ ident }'
+        return stringify_ident_path(project, version, ident_family, ident)
 
     filter_ctx = FilterContext(
         q,
@@ -364,12 +342,9 @@ def get_directory_entries(q, base_url, tag, path):
 # ctx: RequestContext
 # q: Query object
 # parsed_path: ParsedSourcePath
-def generate_source_page(ctx, q, parsed_path):
+def generate_source_page(ctx, q, project, version, path):
     status = falcon.HTTP_OK
 
-    project = parsed_path.project
-    version = parsed_path.version
-    path = parsed_path.path
     version_unquoted = parse.unquote(version)
     source_base_url = f'/{ project }/{ version }/source'
 
@@ -417,7 +392,7 @@ def generate_source_page(ctx, q, parsed_path):
     else:
         title_path = f'{ path_split[-1] } - { "/".join(path_split) } - '
 
-    get_url_with_new_version = lambda v: stringify_source_path(parsed_path._replace(version=parse.quote(v, safe='')))
+    get_url_with_new_version = lambda v: stringify_source_path(project, parse.quote(v, safe=''), path)
 
     # Create template context
     data = {
@@ -460,14 +435,10 @@ def symbol_instance_to_entry(base_url, symbol):
 # ctx: RequestContext
 # basedir: path to data directory, ex: "/srv/elixir-data"
 # parsed_path: ParsedIdentPath
-def generate_ident_page(ctx, q, parsed_path):
+def generate_ident_page(ctx, q, project, version, family, ident):
     status = falcon.HTTP_OK
 
-    ident = parsed_path.ident
-    version = parsed_path.version
     version_unquoted = parse.unquote(version)
-    family = parsed_path.family
-    project = parsed_path.project
     source_base_url = f'/{ project }/{ version }/source'
 
     ident_unquoted = parse.unquote(ident)
@@ -515,7 +486,7 @@ def generate_ident_page(ctx, q, parsed_path):
         if ident != '':
             status = falcon.HTTP_NOT_FOUND
 
-    get_url_with_new_version = lambda v: stringify_ident_path(parsed_path._replace(version=parse.quote(v, safe='')))
+    get_url_with_new_version = lambda v: stringify_ident_path(project, parse.quote(v, safe=''), family, ident)
 
     data = {
         **get_layout_template_context(q, ctx, get_url_with_new_version, project, version),
@@ -536,18 +507,20 @@ Config = namedtuple('Config', 'project_dir, logger')
 def get_config(environ):
     return Config(environ['LXR_PROJ_DIR'], logging.getLogger(__name__))
 
-# Basic information about handled request - current Elixir configuration, configured Jinja environment,
-# request path and parameters
-RequestContext = namedtuple('RequestContext', 'config, jinja_env, path, params')
+# Basic information about handled request - current Elixir configuration, configured Jinja environment
+# and full request path
+RequestContext = namedtuple('RequestContext', 'config, jinja_env')
 
 # Builds a RequestContext instance from global context
-def get_request_context(environ, path, request_params):
+def get_request_context(environ):
     script_dir = os.path.dirname(os.path.realpath(__file__))
     templates_dir = os.path.join(script_dir, '../templates/')
     loader = jinja2.FileSystemLoader(templates_dir)
     environment = jinja2.Environment(loader=loader)
 
-    return RequestContext(get_config(environ), environment, path, request_params)
+    # TODO - config should probably be read from a file and passed to source classes,
+    # not read from apache config environment passed to each request
+    return RequestContext(get_config(environ), environment)
 
 def get_application():
     app = falcon.App()
