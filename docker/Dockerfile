@@ -5,11 +5,10 @@ RUN \
   apt-get --no-install-recommends -y install \
     python3 \
     python3-pip \
-    python3-falcon \
-    python3-jinja2 \
+# TODO switch to berkeleydb
+# NOTE this doesn't easily install from pypi
     python3-bsddb3 \
-    python3-pytest \
-    python3-pygments \
+    python3-venv \
     universal-ctags \
     perl \
     git \
@@ -20,6 +19,11 @@ RUN \
     wget
 
 COPY . /usr/local/elixir/
+
+WORKDIR /usr/local/elixir/
+RUN python3 -m venv --system-site-packages venv && \
+    . ./venv/bin/activate && \
+    pip install -r requirements.txt
 
 RUN mkdir -p /srv/elixir-data/
 
