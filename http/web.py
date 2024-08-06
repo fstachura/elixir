@@ -120,9 +120,23 @@ def stringify_ident_path(project, version, family, ident):
     path = f'/{ project }/{ version }/{ family }/ident/{ ident }'
     return path.rstrip('/')
 
-class IdentResource:
-    # Handles `ident` URL, returns a response
-    # ctx: RequestContext
+# Handles redirect on a POST to ident resource
+class IdentPostRedirectResource:
+    def on_post(self, req, resp, project, version, family=None, ident=None):
+        form = req.get_media()
+        post_ident = form.get('i')
+        post_family = str(form.get('f')).upper()
+
+        if post_ident:
+            post_ident = parse.quote(post_ident.strip(), safe='/')
+            new_path = stringify_ident_path(project, version, post_family, post_ident)
+            raise falcon.HTTPFound(new_path)
+        else:
+            raise falcon.HTTPInternalServerError()
+
+# Handles ident URLs when family is specified in the URL, both POST and GET
+# See IdentPostRedirectResource for behavior on POST
+class IdentResource(IdentPostRedirectResource):
     def on_get(self, req, resp, project, version, family, ident):
         # If identifier family extracted from the path is unknown,
         # replace it with C - the default family.
@@ -154,22 +168,12 @@ class IdentResource:
         resp.content_type = falcon.MEDIA_HTML
         resp.status, resp.text = generate_ident_page(ctx, query, project, version, family, ident)
 
+# Handles ident URLs when family is not specified in the URL
+# Also handles POST requests for ident URLs without family - IdentPostRedirectResource is
+# inherited from IdentResource
 class IdentWithoutFamilyResource(IdentResource):
     def on_get(self, req, resp, project, version, ident):
         super().on_get(req, resp, project, version, 'C', ident)
-
-class IdentPostRedirectResource:
-    def on_post(self, req, resp, project, version):
-        form = req.get_media()
-        post_ident = form.get('i')
-        post_family = str(form.get('f')).upper()
-
-        if post_ident:
-            post_ident = parse.quote(post_ident.strip(), safe='/')
-            new_path = stringify_ident_path(project, version, post_family, post_ident)
-            raise falcon.HTTPFound(new_path)
-        else:
-            raise falcon.HTTPInternalServerError()
 
 
 TOPBAR_FAMILIES = {
