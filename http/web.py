@@ -28,6 +28,9 @@ from urllib import parse
 import falcon
 import jinja2
 
+# NOTE: this has to be done after falcon is imported as falcon import the standard
+# http package.
+# TODO: restructure the project to make imports more predictable
 ELIXIR_DIR = os.path.dirname(os.path.realpath(__file__)) + '/..'
 
 if ELIXIR_DIR not in sys.path:
