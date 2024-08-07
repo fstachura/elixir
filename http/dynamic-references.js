@@ -28,6 +28,34 @@ function identUrl(project, ident, version, family) {
   ]
 */
 
+function reorderByPath(currentPath, items) {
+  let start = Date.now();
+
+  let splitPath = currentPath.split('/');
+  splitPath.shift();
+  let paths = [''];
+  let lastPath = '';
+  for (let p of splitPath) {
+    lastPath += p;
+    if (p != splitPath[splitPath.length - 1]) {
+      lastPath += '/';
+    }
+    paths.push(lastPath);
+  }
+  paths.reverse();
+
+  let buckets = Array.apply(null, Array(paths.length)).map(_ => []);
+
+  for (let i of items) {
+    var pathIndex = paths.findIndex(path => i.path.startsWith(path));
+    pathIndex = pathIndex == -1 ? buckets.length - 1 : pathIndex;
+    buckets[pathIndex].push(i);
+  }
+
+  console.log(Date.now() - start);
+  return buckets.flat();
+}
+
 function generateSymbolDefinitionsHTML(symbolDefinitions, project, version) {
   let result = "";
   let typesCount = {};
@@ -139,10 +167,10 @@ function generateDocCommentsHTML(symbolDocComments, project, version) {
   return result;
 }
 
-function generateReferencesHTML(data, project, version) {
-  let symbolDefinitions = data["definitions"];
-  let symbolReferences = data["references"];
-  let symbolDocumentations = data["documentations"];
+function generateReferencesHTML(data, project, version, currentFilePath) {
+  let symbolDefinitions = reorderByPath(currentFilePath, data["definitions"]);
+  let symbolReferences = reorderByPath(currentFilePath, data["references"]);
+  let symbolDocumentations = reorderByPath(currentFilePath, data["documentations"]);
   return '<div class="lxrident">' +
     generateSymbolDefinitionsHTML(symbolDefinitions, project, version) +
     generateDocCommentsHTML(symbolDocumentations, project, version) +
@@ -185,6 +213,8 @@ document.addEventListener("DOMContentLoaded", _ => {
   var loadingTimer;
   var popupId = 0;
   var abortController;
+  let currentFilePathMatch = location.pathname.match("/[a-zA-Z0-9_-]*/[a-zA-Z0-9_.%-]*/source(.*)");
+  let currentFilePath = currentFilePathMatch !== null ? currentFilePathMatch[1] : undefined;
 
   document.body.querySelectorAll(".ident").forEach(el => {
     el.addEventListener("click", async ev => {
@@ -221,7 +251,7 @@ document.addEventListener("DOMContentLoaded", _ => {
           .then(r => r.json());
 
         if(currentPopupId == popupId) {
-          referencePopup.innerHTML = generateReferencesHTML(result, project, version);
+          referencePopup.innerHTML = generateReferencesHTML(result, project, version, currentFilePath);
           showPopup(referencePopup, ev.target);
         }
       } catch(e) {
