@@ -89,20 +89,18 @@ class SourceResource:
         if path.endswith('/'):
             raise falcon.HTTPFound(stringify_source_path(project, version, path))
 
-        ctx = get_request_context(req.env)
-
-        query = get_query(ctx.config.project_dir, project)
+        query = get_query(req.context.config.project_dir, project)
         if not query:
             resp.status = falcon.HTTP_NOT_FOUND
             resp.content_type = falcon.MEDIA_HTML
-            resp.text = get_error_page(ctx, "Unknown project")
+            resp.text = get_error_page(req.context, "Unknown project")
             return
 
         # Check if path contains only allowed characters
         if not search('^[A-Za-z0-9_/.,+-]*$', path):
             resp.status = falcon.HTTP_BAD_REQUEST
             resp.content_type  = falcon.MEDIA_HTML
-            resp.text = get_error_page(ctx, "Path contains characters that are not allowed.")
+            resp.text = get_error_page(req.context, "Path contains characters that are not allowed.")
             return
 
         if version == 'latest':
@@ -110,7 +108,7 @@ class SourceResource:
             raise falcon.HTTPFound(stringify_source_path(project, version, path))
 
         resp.content_type = falcon.MEDIA_HTML
-        resp.status, resp.text = generate_source_page(ctx, query, project, version, path)
+        resp.status, resp.text = generate_source_page(req.context, query, project, version, path)
 
 # Handles source URLs without a path, ex. '/u-boot/v2023.10/source'.
 # Note lack of trailing slash
@@ -149,20 +147,18 @@ class IdentResource(IdentPostRedirectResource):
         if not validFamily(family):
             family = 'C'
 
-        ctx = get_request_context(req.env)
-
-        query = get_query(ctx.config.project_dir, project)
+        query = get_query(req.context.config.project_dir, project)
         if not query:
             resp.status = falcon.HTTP_NOT_FOUND
             resp.content_type = falcon.MEDIA_HTML
-            resp.text = get_error_page(ctx, "Unknown project.")
+            resp.text = get_error_page(req.context, "Unknown project.")
             return
 
         # Check if identifier contains only allowed characters
         if not ident or not search('^[A-Za-z0-9_\$\.%-]*$', ident):
             resp.status = falcon.HTTP_BAD_REQUEST
             resp.content_type = falcon.MEDIA_HTML
-            resp.text = get_error_page(ctx, "Identifier is invalid.")
+            resp.text = get_error_page(req.context, "Identifier is invalid.")
             return
 
         if version == 'latest':
@@ -170,7 +166,7 @@ class IdentResource(IdentPostRedirectResource):
             raise falcon.HTTPFound(stringify_ident_path(project, version, family, ident))
 
         resp.content_type = falcon.MEDIA_HTML
-        resp.status, resp.text = generate_ident_page(ctx, query, project, version, family, ident)
+        resp.status, resp.text = generate_ident_page(req.context, query, project, version, family, ident)
 
 # Handles ident URLs when family is not specified in the URL
 # Also handles POST requests for ident URLs without family - IdentPostRedirectResource is
@@ -543,9 +539,18 @@ class RawPathComponent:
         if raw_uri:
             req.path, _, _ = raw_uri.partition('?')
 
+# Adds request context to all requests
+class RequestContextMiddleware:
+    def process_request(self, req, resp):
+        req.context = get_request_context(req.env)
+
+
 # Builds and returns the Falcon application
 def get_application():
-    app = falcon.App(middleware=[RawPathComponent()])
+    app = falcon.App(middleware=[
+        RawPathComponent(),
+        RequestContextMiddleware(),
+    ])
 
     app.add_route('/{project}/{version}/source/{path:path}', SourceResource())
     app.add_route('/{project}/{version}/source', SourceWithoutPathResource())
