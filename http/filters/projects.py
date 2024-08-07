@@ -91,6 +91,9 @@ project_filters = {
         *default_filters,
         *common_kconfig_filters,
     ],
+    'systemd': [
+        *default_filters,
+    ],
     'u-boot': [
         *default_filters,
         DtsiFilter,
