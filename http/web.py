@@ -156,7 +156,7 @@ class IdentResource(IdentPostRedirectResource):
             return
 
         # Check if identifier contains only allowed characters
-        if not ident or not search('^[A-Za-z0-9_\$\.,-]*$', ident):
+        if not ident or not search('^[A-Za-z0-9_\$\.%-]*$', ident):
             resp.status = falcon.HTTP_BAD_REQUEST
             resp.content_type = falcon.MEDIA_HTML
             resp.text = get_error_page(ctx, "Identifier is invalid.")
@@ -527,8 +527,16 @@ def get_request_context(environ):
     # not read from apache config environment passed to each request
     return RequestContext(get_config(environ), environment)
 
+# see https://falcon.readthedocs.io/en/v3.1.2/user/recipes/raw-url-path.html
+class RawPathComponent:
+    def process_request(self, req, resp):
+        raw_uri = req.env.get('RAW_URI') or req.env.get('REQUEST_URI')
+        if raw_uri:
+            req.path, _, _ = raw_uri.partition('?')
+
 def get_application():
-    app = falcon.App()
+    app = falcon.App(middleware=[RawPathComponent()])
+
     app.add_route('/{project}/{version}/source/{path:path}', SourceResource())
     app.add_route('/{project}/{version}/source', SourceWithoutPathResource())
     app.add_route('/{project}/{version}/ident', IdentPostRedirectResource())
