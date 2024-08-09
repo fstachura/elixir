@@ -258,7 +258,7 @@ def format_code(filename, code):
 # path: path to the file in the repository
 def generate_source(q, project, version, path):
     version_unquoted = parse.unquote(version)
-    raw_code = q.query('file', version_unquoted, path)
+    code = q.query('file', version_unquoted, path)
 
     _, fname = os.path.split(path)
     _, extension = os.path.splitext(fname)
@@ -284,7 +284,6 @@ def generate_source(q, project, version, path):
     )
 
     filters = get_filters(filter_ctx, project)
-    code = raw_code
 
     # Apply filters
     for f in filters:
@@ -298,7 +297,7 @@ def generate_source(q, project, version, path):
     for f in filters:
         html_code_block = f.untransform_formatted_code(filter_ctx, html_code_block)
 
-    return html_code_block, raw_code
+    return html_code_block
 
 
 # Represents a file entry in git tree
@@ -338,19 +337,6 @@ def get_directory_entries(q, base_url, tag, path):
     return dir_entries
 
 
-# if source file is bigger than BIG_FILE_SIZE bytes, send extra cache headers
-# 1_000_000 bytes should be reasonable, on 6.8 this includes:
-# * most of drivers/gpu/drm/amd/include/asic_reg
-# * drivers/accel/habanalabs/include/gaudi2/asic_reg/dcore0_sync_mngr_objs_regs.h
-# * drivers/net/wireless/realtek/rtw88/rtw8822c_table.c and two other, similar files
-#   that seem to have the same purpose as amd asic_reg files
-# * crypto/testmgr.h
-# * tools/testing/radix-tree/maple.c
-# in the future it would be probably best to extra cache the biggest files files in Elixir,
-# perhaps by storing formatting results in files named after git blob id. cache could be
-# invalidated if cache of one of the filters changes (or manually, by removing the files)
-BIG_FILE_SIZE = 1_000_000
-
 # Generates response (status code and optionally HTML) of the `source` route
 # ctx: RequestContext
 # q: Query object
@@ -377,18 +363,12 @@ def generate_source_page(ctx, q, project, version, path):
         # store in shared caches, 24 hours for shared cache, 1 hour for client
         cache_control = ('public', 's-maxage=86400', 'max-age=3600')
     elif type == 'blob':
-        generated_html, raw_code = generate_source(q, project, version, path)
         template_ctx = {
-            'code': generated_html,
+            'code': generate_source(q, project, version, path),
         }
         template = ctx.jinja_env.get_template('source.html')
-        ctx.logger.error(str(len(raw_code)))
-        if len(raw_code) < BIG_FILE_SIZE:
-            # store in shared caches, 24 hours for shared cache, 1 hour for client
-            cache_control = ('public', 's-maxage=86400', 'max-age=3600')
-        else:
-            # store in shared caches, 24 hours for all cache, do not revalidate
-            cache_control = ('public', 'max-age=86400', 'immutable')
+        # store in shared caches, 24 hours for shared cache, 1 hour for client
+        cache_control = ('public', 's-maxage=86400', 'max-age=3600')
     else:
         status = falcon.HTTP_NOT_FOUND
         template_ctx = {
