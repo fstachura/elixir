@@ -85,6 +85,11 @@ get_file()
     git cat-file blob "$v:`denormalize $opt2`" 2>/dev/null
 }
 
+get_file_by_hash()
+{
+    git cat-file blob $opt1
+}
+
 get_dir()
 {
         v=`echo $opt1 | version_rev`
@@ -261,6 +266,10 @@ case $cmd in
 
     get-file)
         get_file
+        ;;
+
+    get-file-by-hash)
+        get_file_by_hash
         ;;
 
     get-dir)

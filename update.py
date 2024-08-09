@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/us,/bin/env python3
 
 #  This file is part of Elixir, a source code cross-referencer.
 #
@@ -22,8 +22,14 @@
 # Throughout, an "idx" is the sequential number associated with a blob.
 # This is different from that blob's Git hash.
 
+import re
 from sys import argv
 from threading import Thread, Lock, Event, Condition
+
+import pygments
+import pygments.lexers
+from pygments.lexers import CLexer
+import pygments.token as t
 
 import lib
 from lib import script, scriptLines
@@ -256,6 +262,124 @@ class UpdateDefs(Thread):
                         print(f"def {type} {ident} in #{idx} @ {line}")
                     db.defs.put(ident, obj)
 
+def tokenize_default(hash, filename):
+    family = lib.getFileFamily(filename)
+    tokens = scriptLines('tokenize-file', '-b', hash, family)
+    prefix = b''
+    # Kconfig values are saved as CONFIG_<value>
+    if family == 'K':
+        prefix = b'CONFIG_'
+
+    even = True
+    line_num = 1
+
+    for tok in tokens:
+        even = not even
+        if even:
+            tok = prefix + tok
+            yield tok, line_num
+        else:
+            line_num += tok.count(b'\1')
+
+C_PREPROC_KEYWORDS = {
+    'if',
+    'elif',
+    'else',
+    'endif',
+    'ifdef',
+    'ifndef',
+    'elifdef',
+    'elifndef',
+    'define',
+    'undef',
+    'include',
+    'error',
+    'warning',
+}
+
+PossibleMacroIdent = t.Comment.Preproc.PossibleMacroIdent
+
+# coalesce and split if0 (special case because lines in between are marked as comments)
+# musl/v1.2.5/source/src/regex/regcomp.c
+def coalesce_if0(tokens):
+    collect = False
+    collected_tokens = []
+    for tok_type, tok in tokens:
+        if not collect and t.is_token_subtype(tok_type, t.Comment.Preproc) and re.match(r'#if\s+0', tok):
+            collect = True
+            yield (tok_type, tok)
+        elif collect:
+            if t.is_token_subtype(tok_type, t.Comment) and not t.is_token_subtype(tok_type, t.Comment.Preproc):
+                collected_tokens.append(tok)
+            else:
+                coalesced_tokens = ''.join(collected_tokens)
+                collected_tokens = []
+                collect = False
+                yield (t.Comment.Preproc, coalesced_tokens)
+                yield (tok_type, tok)
+        else:
+            yield (tok_type, tok)
+
+# coalesce and then split other preproc tokens again
+# include/paths.h
+# skip warning and error
+# musl/v1.2.5/source/include/sys/termios.h
+def collect_and_split_macros(tokens):
+    collect_until_newline = None
+    collected_tokens = []
+    for tok_type, tok in tokens:
+        if collect_until_newline == 'boring':
+            if (t.is_token_subtype(tok_type, t.Whitespace) and '\n' in tok) or \
+                    (t.is_token_subtype(tok_type, t.Comment.Preproc) and re.match(r'\s*\n\s*', tok)):
+                collect_until_newline = None
+            yield (tok_type, tok)
+        elif collect_until_newline == 'interesting':
+            if (t.is_token_subtype(tok_type, t.Whitespace) or t.is_token_subtype(tok_type, t.Comment.Preproc)) and '\n' in tok:
+                collected_tokens.append(tok)
+                collect_until_newline = None
+                split_tokens = list(pygments.lex(''.join(collected_tokens), CLexer(stripnl=False, ensurenl=False)))
+                collected_tokens = []
+                for split_tok_type, split_tok in split_tokens:
+                    token_allowed_type = t.is_token_subtype(split_tok_type, t.Name) or \
+                            t.is_token_subtype(split_tok_type, t.Keyword)
+                    if token_allowed_type:
+                        yield (PossibleMacroIdent, split_tok)
+                    else:
+                        yield (t.Comment.Preproc, split_tok)
+            else:
+                collected_tokens.append(tok)
+        elif t.is_token_subtype(tok_type, t.Comment.Preproc):
+            match_boring = re.match(r'\s*#?\s*(include|error|warning)', tok)
+            if tok == '#':
+                yield (tok_type, tok)
+            elif match_boring:
+                collect_until_newline = 'boring'
+                yield (tok_type, tok)
+            else:
+                collect_until_newline = 'interesting'
+                match_interesting = re.match(r'\s*#?\s*(if|elif|else|endif|ifdef|ifndef|elifndef|elifdef|define|undef)\s', tok)
+                if match_interesting:
+                    yield (tok_type, match_interesting.group(0))
+                    collected_tokens.append(tok[len(match_interesting.group(0)):])
+                else:
+                    collected_tokens.append(tok)
+        else:
+            yield (tok_type, tok)
+
+def tokenize_pygments_c(hash, filename):
+    code = script('get-file-by-hash', hash, filename).decode("utf-8")
+    lexer = pygments.lexers.guess_lexer_for_filename(filename, code)
+    lexer.stripnl = False
+    tokens = collect_and_split_macros(coalesce_if0(pygments.lex(code, lexer)))
+
+    lineno = 1
+
+    for tok in tokens:
+        if t.is_token_subtype(tok[0], t.Name) or t.is_token_subtype(tok[0], t.Keyword) or tok[0] == PossibleMacroIdent:
+            yield tok[1].encode(), lineno
+
+        lineno += tok[1].count('\n')
+
 
 class UpdateRefs(Thread):
     def __init__(self, start, inc):
@@ -300,33 +424,23 @@ class UpdateRefs(Thread):
             family = lib.getFileFamily(filename)
             if family == None: continue
 
-            prefix = b''
-            # Kconfig values are saved as CONFIG_<value>
-            if family == 'K':
-                prefix = b'CONFIG_'
+            if filename.endswith(('.c', '.cc', '.cpp', '.c++', '.cxx', '.h')):
+                token_generator = tokenize_pygments_c(hash, filename)
+            else:
+                token_generator = tokenize_default(hash, filename)
 
-            tokens = scriptLines('tokenize-file', '-b', hash, family)
-            even = True
-            line_num = 1
             idents = {}
             with defs_lock:
-                for tok in tokens:
-                    even = not even
-                    if even:
-                        tok = prefix + tok
-
-                        if (db.defs.exists(tok) and
-                            not ( (idx*idx_key_mod + line_num) in defs_idxes and
-                                defs_idxes[idx*idx_key_mod + line_num] == tok ) and
-                            (family != 'M' or tok.startswith(b'CONFIG_'))):
-                            # We only index CONFIG_??? in makefiles
-                            if tok in idents:
-                                idents[tok] += ',' + str(line_num)
-                            else:
-                                idents[tok] = str(line_num)
-
-                    else:
-                        line_num += tok.count(b'\1')
+                for tok, line_num in token_generator:
+                    if (db.defs.exists(tok) and
+                        not ( (idx*idx_key_mod + line_num) in defs_idxes and
+                            defs_idxes[idx*idx_key_mod + line_num] == tok ) and
+                        (family != 'M' or tok.startswith(b'CONFIG_'))):
+                        # We only index CONFIG_??? in makefiles
+                        if tok in idents:
+                            idents[tok] += ',' + str(line_num)
+                        else:
+                            idents[tok] = str(line_num)
 
             with refs_lock:
                 for ident, lines in idents.items():
