@@ -100,7 +100,7 @@ class SourceResource:
             raise falcon.HTTPFound(stringify_source_path(project, version, path))
 
         resp.content_type = falcon.MEDIA_HTML
-        resp.status, resp.text = generate_source_page(req.context, query, project, version, path)
+        resp.status, resp.text, resp.cache_control = generate_source_page(req.context, query, project, version, path)
 
 # Handles source URLs without a path, ex. '/u-boot/v2023.10/source'.
 # Note lack of trailing slash
@@ -258,7 +258,7 @@ def format_code(filename, code):
 # path: path to the file in the repository
 def generate_source(q, project, version, path):
     version_unquoted = parse.unquote(version)
-    code = q.query('file', version_unquoted, path)
+    raw_code = q.query('file', version_unquoted, path)
 
     _, fname = os.path.split(path)
     _, extension = os.path.splitext(fname)
@@ -284,6 +284,7 @@ def generate_source(q, project, version, path):
     )
 
     filters = get_filters(filter_ctx, project)
+    code = raw_code
 
     # Apply filters
     for f in filters:
@@ -297,7 +298,7 @@ def generate_source(q, project, version, path):
     for f in filters:
         html_code_block = f.untransform_formatted_code(filter_ctx, html_code_block)
 
-    return html_code_block
+    return html_code_block, raw_code
 
 
 # Represents a file entry in git tree
@@ -336,12 +337,27 @@ def get_directory_entries(q, base_url, tag, path):
 
     return dir_entries
 
+
+# if source file is bigger than BIG_FILE_SIZE bytes, send extra cache headers
+# 1_000_000 bytes should be reasonable, on 6.8 this includes:
+# * most of drivers/gpu/drm/amd/include/asic_reg
+# * drivers/accel/habanalabs/include/gaudi2/asic_reg/dcore0_sync_mngr_objs_regs.h
+# * drivers/net/wireless/realtek/rtw88/rtw8822c_table.c and two other, similar files
+#   that seem to have the same purpose as amd asic_reg files
+# * crypto/testmgr.h
+# * tools/testing/radix-tree/maple.c
+# in the future it would be probably best to extra cache the biggest files files in Elixir,
+# perhaps by storing formatting results in files named after git blob id. cache could be
+# invalidated if cache of one of the filters changes (or manually, by removing the files)
+BIG_FILE_SIZE = 1_000_000
+
 # Generates response (status code and optionally HTML) of the `source` route
 # ctx: RequestContext
 # q: Query object
 # parsed_path: ParsedSourcePath
 def generate_source_page(ctx, q, project, version, path):
     status = falcon.HTTP_OK
+    cache_control = None
 
     version_unquoted = parse.unquote(version)
     source_base_url = f'/{ project }/{ version }/source'
@@ -358,11 +374,21 @@ def generate_source_page(ctx, q, project, version, path):
             'back_url': f'{ source_base_url }{ back_path }' if path != '' else None,
         }
         template = ctx.jinja_env.get_template('tree.html')
+        # store in shared caches, 24 hours for shared cache, 1 hour for client
+        cache_control = ('public', 's-maxage=86400', 'max-age=3600')
     elif type == 'blob':
+        generated_html, raw_code = generate_source(q, project, version, path)
         template_ctx = {
-            'code': generate_source(q, project, version, path),
+            'code': generated_html,
         }
         template = ctx.jinja_env.get_template('source.html')
+        ctx.logger.error(str(len(raw_code)))
+        if len(raw_code) < BIG_FILE_SIZE:
+            # store in shared caches, 24 hours for shared cache, 1 hour for client
+            cache_control = ('public', 's-maxage=86400', 'max-age=3600')
+        else:
+            # store in shared caches, 24 hours for all cache, do not revalidate
+            cache_control = ('public', 'max-age=86400', 'immutable')
     else:
         status = falcon.HTTP_NOT_FOUND
         template_ctx = {
@@ -402,7 +428,7 @@ def generate_source_page(ctx, q, project, version, path):
         **template_ctx,
     }
 
-    return (status, template.render(data))
+    return (status, template.render(data), cache_control)
 
 # Represents line in a file with URL to that line
 LineWithURL = namedtuple('LineWithURL', 'lineno, url')
