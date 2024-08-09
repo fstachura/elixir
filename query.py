@@ -22,10 +22,13 @@ from lib import script, scriptLines, decode
 import lib
 import data
 import os
-from collections import OrderedDict
+from collections import OrderedDict, namedtuple
 from urllib import parse
 
 from io import BytesIO
+
+# Represents parsed git ls-tree version path line
+FileInfo = namedtuple('FileInfo', 'mode, type, blob_id, path')
 
 class SymbolInstance(object):
     def __init__(self, path, line, type=None):
@@ -264,6 +267,13 @@ class Query:
 
         else:
             return 'Unknown subcommand: ' + cmd + '\n'
+
+    def get_file_info(self, version, path):
+        info = decode(self.script('get-file-info', version, path))
+        info_split = info.split(' ')
+        mode, type, blob_id = info_split[0], info_split[1], info_split[2]
+        path = ' '.join(info_split[6:])
+        return FileInfo(mode, type, blob_id, path)
 
     def get_file_raw(self, version, path):
         return decode(self.script('get-file', version, path))

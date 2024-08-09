@@ -251,6 +251,7 @@ def format_code(filename, code):
     formatter = pygments.formatters.HtmlFormatter(linenos=True, anchorlinenos=True)
     return pygments.highlight(code, lexer, formatter)
 
+
 # Generate formatted HTML of a file, apply filters (for ex. to add identifier links)
 # q: Query object
 # project: name of the requested project
@@ -259,6 +260,7 @@ def format_code(filename, code):
 def generate_source(q, project, version, path):
     version_unquoted = parse.unquote(version)
     code = q.query('file', version_unquoted, path)
+    code_len = len(code)
 
     _, fname = os.path.split(path)
     _, extension = os.path.splitext(fname)
@@ -297,7 +299,7 @@ def generate_source(q, project, version, path):
     for f in filters:
         html_code_block = f.untransform_formatted_code(filter_ctx, html_code_block)
 
-    return html_code_block
+    return html_code_block, code_len
 
 
 # Represents a file entry in git tree
@@ -336,6 +338,21 @@ def get_directory_entries(q, base_url, tag, path):
 
     return dir_entries
 
+# If source file is bigger than this, its formatting results will be cached
+FORMATTED_SOURCE_CACHE_THRESHOLD = 1_000_000
+
+# Returns cached formatting results if it exists
+def query_source_cache(cache_dir, blob_id):
+    cache_file = os.path.join(cache_dir, blob_id)
+    if os.path.exists(cache_file):
+        with open(cache_file) as f:
+            return f.read()
+
+# Saves formatting results in cache
+def save_in_source_cache(cache_dir, blob_id, code):
+    cache_file = os.path.join(cache_dir, blob_id)
+    with open(cache_file, 'w') as f:
+        f.write(code)
 
 # Generates response (status code and optionally HTML) of the `source` route
 # ctx: RequestContext
@@ -363,8 +380,19 @@ def generate_source_page(ctx, q, project, version, path):
         # store in shared caches, 24 hours for shared cache, 1 hour for client
         cache_control = ('public', 's-maxage=86400', 'max-age=3600')
     elif type == 'blob':
+        _, _, blob_id, _ = q.get_file_info(version_unquoted, path)
+        code = None
+        blob = query_source_cache(ctx.config.source_cache_dir, blob_id)
+
+        if blob is not None:
+            code = blob
+        else:
+            code, code_len = generate_source(q, project, version, path)
+            if code_len > FORMATTED_SOURCE_CACHE_THRESHOLD:
+                save_in_source_cache(ctx.config.source_cache_dir, blob_id, code)
+
         template_ctx = {
-            'code': generate_source(q, project, version, path),
+            'code': code,
         }
         template = ctx.jinja_env.get_template('source.html')
         # store in shared caches, 24 hours for shared cache, 1 hour for client
@@ -506,11 +534,16 @@ def generate_ident_page(ctx, q, project, version, family, ident):
 
 
 # Elixir config, currently contains only path to directory with projects
-Config = namedtuple('Config', 'project_dir')
+Config = namedtuple('Config', 'project_dir, source_cache_dir')
 
 # Builds a Config instance from global context
 def get_config(environ):
-    return Config(environ['LXR_PROJ_DIR'])
+    source_cache_dir = '/tmp/elixir-source-cache'
+
+    if not os.path.exists(source_cache_dir):
+        os.mkdir(source_cache_dir)
+
+    return Config(environ['LXR_PROJ_DIR'], source_cache_dir)
 
 # Basic information about handled request - current Elixir configuration, configured Jinja environment
 # and logger
