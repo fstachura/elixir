@@ -48,6 +48,7 @@ class Query:
         self.repo_dir = repo_dir
         self.data_dir = data_dir
         self.dts_comp_support = int(self.script('dts-comp'))
+        self.file_cache = {}
         self.db = data.DB(data_dir, readonly=True, dtscomp=self.dts_comp_support)
 
     def script(self, *args):
@@ -255,6 +256,21 @@ class Query:
 
     def get_file_raw(self, version, path):
         return decode(self.script('get-file', version, path))
+
+    def file_exists_cached(self, version, path):
+        if version not in self.file_cache:
+            version_cache = set()
+            last_dir = None
+            for _, path in self.db.vers.get(version).iter():
+                dirname, _ = os.path.split(path)
+                if dirname != last_dir:
+                    last_dir = dirname
+                    version_cache.add(dirname)
+                version_cache.add(path)
+
+            self.file_cache[version] = version_cache
+
+        return path.strip('/') in self.file_cache[version]
 
     def get_idents_comps(self, version, ident):
 

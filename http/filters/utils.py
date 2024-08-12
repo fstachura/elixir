@@ -91,3 +91,11 @@ def decode_number(string):
 
     return int(result)
 
+
+def pick_query_exists(num_results, query, tag):
+    if num_results > 5:
+        return lambda path: query.file_exists_cached(tag, path)
+    else:
+        return lambda path: query.query('exist', tag, path)
+
+

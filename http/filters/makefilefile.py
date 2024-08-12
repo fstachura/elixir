@@ -1,6 +1,6 @@
 from os.path import dirname
 import re
-from filters.utils import Filter, FilterContext, decode_number, encode_number, filename_without_ext_matches
+from filters.utils import Filter, FilterContext, decode_number, encode_number, filename_without_ext_matches, pick_query_exists
 
 # Filters for files listed in Makefiles
 # path/file
@@ -14,20 +14,25 @@ class MakefileFileFilter(Filter):
         return super().check_if_applies(ctx) and \
                 filename_without_ext_matches(ctx.filepath, {'Makefile'})
 
+    file_matcher = '(?:(?<=\s|=)|(?<=-I))(?!/)([-\w/]+/[-\w\.]+)(\s+|\)|$)'
+
     def transform_raw_code(self, ctx, code: str) -> str:
+        results = re.findall(self.file_matcher, code, flags=re.MULTILINE)
+        file_exists = pick_query_exists(len(results), ctx.query, ctx.tag)
+
         def keep_makefilefile(m):
             filedir = dirname(ctx.filepath)
 
             if filedir != '/':
                 filedir += '/'
 
-            if ctx.query.query('exist', ctx.tag, filedir + m.group(1)):
+            if file_exists(filedir + m.group(1)):
                 self.makefilefile.append(m.group(1))
                 return f'__KEEPMAKEFILEFILE__{ encode_number(len(self.makefilefile)) }{ m.group(2) }'
             else:
                 return m.group(0)
 
-        return re.sub('(?:(?<=\s|=)|(?<=-I))(?!/)([-\w/]+/[-\w\.]+)(\s+|\)|$)', keep_makefilefile, code, flags=re.MULTILINE)
+        return re.sub(self.file_matcher, keep_makefilefile, code, flags=re.MULTILINE)
 
     def untransform_formatted_code(self, ctx: FilterContext, html: str) -> str:
         def replace_makefilefile(m):
