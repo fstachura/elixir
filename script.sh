@@ -79,6 +79,18 @@ get_blob()
     git cat-file blob $opt1
 }
 
+get_file_info()
+{
+    v=`echo $opt1 | version_rev`
+    git ls-tree -l "$v" "`denormalize $opt2`" 2>/dev/null
+}
+
+list_all_files()
+{
+    v=`echo $opt1 | version_rev`
+    git ls-tree -r "$v" | awk '{ print $4 }'
+}
+
 get_file()
 {
     v=`echo $opt1 | version_rev`
@@ -262,6 +274,10 @@ case $cmd in
     get-file)
         get_file
         ;;
+
+    list-all-files)
+       list_all_files
+       ;;
 
     get-dir)
         get_dir
