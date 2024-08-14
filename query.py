@@ -19,7 +19,9 @@
 #  along with Elixir.  If not, see <http://www.gnu.org/licenses/>.
 
 from lib import script, scriptLines, decode
+import sys
 import lib
+import functools
 import data
 import os
 from collections import OrderedDict
@@ -185,12 +187,20 @@ class Query:
                 if family == 'K':
                     prefix = b'CONFIG_'
 
+                @functools.cache
+                def check_def(tok, family):
+                    tok_def = self.db.defs.get(tok)
+                    if tok_def is not None:
+                        comp_family = lib.compatibleFamily(tok_def.get_families(), family)
+                        return comp_family or \
+                            lib.compatibleMacro(tok_def.get_macros(), family)
+                    else:
+                        return False
+
                 for tok in tokens:
                     even = not even
                     tok2 = prefix + tok
-                    if (even and self.db.defs.exists(tok2) and
-                        (lib.compatibleFamily(self.db.defs.get(tok2).get_families(), family) or
-                        lib.compatibleMacro(self.db.defs.get(tok2).get_macros(), family))):
+                    if even and check_def(tok2, family):
                         tok = b'\033[31m' + tok2 + b'\033[0m'
                     else:
                         tok = lib.unescape(tok)
