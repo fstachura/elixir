@@ -25,8 +25,8 @@ from urllib import parse
 from bsddb3.db import DB_SET_RANGE
 import falcon
 
-from lib import autoBytes
-from query import get_query
+from .lib import autoBytes
+from .query import get_query
 
 class AutocompleteResource:
     def on_get(self, req, resp):
