@@ -26,7 +26,7 @@ class DtsCompDocsFilter(Filter):
             else:
                 return m.group(0)
 
-        return re.sub('([\w-]+,?[\w-]+)', keep_dtscompB, code, flags=re.MULTILINE)
+        return re.sub(r'([\w-]+,?[\w-]+)', keep_dtscompB, code, flags=re.MULTILINE)
 
     def untransform_formatted_code(self, ctx: FilterContext, html: str) -> str:
         def replace_dtscompB(m):
@@ -34,5 +34,5 @@ class DtsCompDocsFilter(Filter):
 
             return f'<a class="ident" href="{ ctx.get_ident_url(i, "B") }">{ i }</a>'
 
-        return re.sub('__KEEPDTSCOMPB__([A-J]+)', replace_dtscompB, html, flags=re.MULTILINE)
+        return re.sub(r'__KEEPDTSCOMPB__([A-J]+)', replace_dtscompB, html, flags=re.MULTILINE)
 

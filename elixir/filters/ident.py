@@ -18,7 +18,7 @@ class IdentFilter(Filter):
             self.idents.append(m.group(1))
             return '__KEEPIDENTS__' + encode_number(len(self.idents))
 
-        return re.sub('\033\[31m(?!CONFIG_)(.*?)\033\[0m', sub_func, code, flags=re.MULTILINE)
+        return re.sub(r'\033\[31m(?!CONFIG_)(.*?)\033\[0m', sub_func, code, flags=re.MULTILINE)
 
     def untransform_formatted_code(self, ctx: FilterContext, html: str) -> str:
         def sub_func(m):
@@ -26,5 +26,5 @@ class IdentFilter(Filter):
             link = f'<a class="ident" href="{ ctx.get_ident_url(i) }">{ i }</a>'
             return str(m.group(1) or '') + link
 
-        return re.sub('__(<.+?>)?KEEPIDENTS__([A-J]+)', sub_func, html, flags=re.MULTILINE)
+        return re.sub(r'__(<.+?>)?KEEPIDENTS__([A-J]+)', sub_func, html, flags=re.MULTILINE)
 

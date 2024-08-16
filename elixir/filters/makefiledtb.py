@@ -19,7 +19,7 @@ class MakefileDtbFilter(Filter):
             self.makefiledtb.append(m.group(1))
             return f'__KEEPMAKEFILEDTB__{ encode_number(len(self.makefiledtb)) }.dtb'
 
-        return re.sub('(?<=\s)([-\w/+\.]+)\.dtb', keep_makefiledtb, code, flags=re.MULTILINE)
+        return re.sub(r'(?<=\s)([-\w/+\.]+)\.dtb', keep_makefiledtb, code, flags=re.MULTILINE)
 
     def untransform_formatted_code(self, ctx: FilterContext, html: str) -> str:
         def replace_makefiledtb(m):
@@ -32,5 +32,5 @@ class MakefileDtbFilter(Filter):
             npath = f'{ filedir }{ w }.dts'
             return f'<a href="{ ctx.get_absolute_source_url(npath) }">{ w }.dtb</a>'
 
-        return re.sub('__KEEPMAKEFILEDTB__([A-J]+)\.dtb', replace_makefiledtb, html, flags=re.MULTILINE)
+        return re.sub(r'__KEEPMAKEFILEDTB__([A-J]+)\.dtb', replace_makefiledtb, html, flags=re.MULTILINE)
 
