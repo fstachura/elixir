@@ -26,7 +26,7 @@ class DtsCompCodeFilter(Filter):
             self.dtscompC.append(m.group(4))
             return f'{ m.group(1) }"__KEEPDTSCOMPC__{ encode_number(len(self.dtscompC)) }"'
 
-        return re.sub('(\s*{*\s*\.(\033\[31m)?compatible(\033\[0m)?\s*=\s*)\"(.+?)\"',
+        return re.sub(r'(\s*{*\s*\.(\033\[31m)?compatible(\033\[0m)?\s*=\s*)\"(.+?)\"',
                       keep_dtscompC, code, flags=re.MULTILINE)
 
     def untransform_formatted_code(self, ctx: FilterContext, html: str) -> str:
@@ -34,5 +34,5 @@ class DtsCompCodeFilter(Filter):
             i = self.dtscompC[decode_number(m.group(1)) - 1]
             return f'<a class="ident" href="{ ctx.get_ident_url(i, "B") }">{ i }</a>'
 
-        return re.sub('__KEEPDTSCOMPC__([A-J]+)', replace_dtscompC, html, flags=re.MULTILINE)
+        return re.sub(r'__KEEPDTSCOMPC__([A-J]+)', replace_dtscompC, html, flags=re.MULTILINE)
 

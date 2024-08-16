@@ -21,7 +21,7 @@ class MakefileSrcTreeFilter(Filter):
             else:
                 return m.group(0)
 
-        return re.sub('(?:(?<=\s|=)|(?<=-I))(?!/)\$\(srctree\)/((?:[-\w/]+/)?[-\w\.]+)(\s+|\)|$)',
+        return re.sub(r'(?:(?<=\s|=)|(?<=-I))(?!/)\$\(srctree\)/((?:[-\w/]+/)?[-\w\.]+)(\s+|\)|$)',
                       keep_makefilesrctree, code, flags=re.MULTILINE)
 
     def untransform_formatted_code(self, ctx: FilterContext, html: str) -> str:
@@ -30,5 +30,5 @@ class MakefileSrcTreeFilter(Filter):
             url = ctx.get_absolute_source_url(w)
             return f'<a href="{ url }">$(srctree)/{ w }</a>'
 
-        return re.sub('__KEEPMAKEFILESRCTREE__([A-J]+)', replace_makefilesrctree, html, flags=re.MULTILINE)
+        return re.sub(r'__KEEPMAKEFILESRCTREE__([A-J]+)', replace_makefilesrctree, html, flags=re.MULTILINE)
 
