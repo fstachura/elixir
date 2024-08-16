@@ -65,14 +65,20 @@ def get_error_page(ctx, title, details=None):
     return template.render(template_ctx)
 
 
+# Returns base url of source pages
+# project and version assumed unquoted
+def get_source_base_url(project, version):
+    return f'/{ parse.quote(project, safe="") }/{ parse.quote(version, safe="") }/source'
+
 # Converts ParsedSourcePath to a string with corresponding URL path
 def stringify_source_path(project, version, path):
     if not path.startswith('/'):
         path = '/' + path
-    path = f'/{ project }/{ parse.quote(version, safe="") }/source{ path }'
+    path = f'{ get_source_base_url(project, version) }{ path }'
     return path.rstrip('/')
 
 # Handles source URLs
+# Path parameters are asssumed to be unquoted by converters
 class SourceResource:
     def on_get(self, req, resp, project, version, path):
         if not path.startswith('/') and len(path) != 0:
@@ -109,9 +115,19 @@ class SourceWithoutPathResource(SourceResource):
         return super().on_get(req, resp, project, version, '')
 
 
+# Returns base url of ident pages
+# project and version assumed unquoted
+def get_ident_base_url(project, version, family=None):
+    project = parse.quote(project, safe="")
+    version = parse.quote(version, safe="")
+    if family is not None:
+        return f'/{ project }/{ version }/{ parse.quote(family, safe="") }/ident'
+    else:
+        return f'/{ project }/{ version }/ident'
+
 # Converts ParsedIdentPath to a string with corresponding URL path
 def stringify_ident_path(project, version, family, ident):
-    path = f'/{ project }/{ parse.quote(version, safe="") }/{ family }/ident/{ parse.quote(ident, safe="") }'
+    path = f'{ get_ident_base_url(project, version, family) }/{ parse.quote(ident, safe="") }'
     return path.rstrip('/')
 
 # Handles redirect on a POST to ident resource
@@ -130,6 +146,7 @@ class IdentPostRedirectResource:
 
 # Handles ident URLs when family is specified in the URL, both POST and GET
 # See IdentPostRedirectResource for behavior on POST
+# Path parameters are asssumed to be unquoted by converters
 class IdentResource(IdentPostRedirectResource):
     def on_get(self, req, resp, project, version, family, ident):
         query = get_query(req.context.config.project_dir, project)
@@ -214,8 +231,8 @@ def get_layout_template_context(q, ctx, get_url_with_new_version, project, versi
         'versions': get_versions(q.query('versions'), get_url_with_new_version),
         'topbar_families': TOPBAR_FAMILIES,
 
-        'source_base_url': f'/{ project }/{ parse.quote(version, safe="") }/source',
-        'ident_base_url': f'/{ project }/{ parse.quote(version, safe="") }/ident',
+        'source_base_url': get_source_base_url(project, version),
+        'ident_base_url': get_ident_base_url(project, version),
         'current_project': project,
         'current_tag': parse.unquote(version),
         'current_family': 'A',
@@ -250,7 +267,7 @@ def generate_source(q, project, version, path):
     extension = extension[1:].lower()
     family = q.query('family', fname)
 
-    source_base_url = f'/{ project }/{ parse.quote(version, safe="") }/source'
+    source_base_url = get_source_base_url(project, version)
 
     def get_ident_url(ident, ident_family=None):
         if ident_family is None:
@@ -327,7 +344,7 @@ def get_directory_entries(q, base_url, tag, path):
 def generate_source_page(ctx, q, project, version, path):
     status = falcon.HTTP_OK
 
-    source_base_url = f'/{ project }/{ parse.quote(version, safe="") }/source'
+    source_base_url = get_source_base_url(project, version)
 
     type = q.query('type', version, path)
 
@@ -419,7 +436,7 @@ def symbol_instance_to_entry(base_url, symbol):
 def generate_ident_page(ctx, q, project, version, family, ident):
     status = falcon.HTTP_OK
 
-    source_base_url = f'/{ project }/{ parse.quote(version, safe="") }/source'
+    source_base_url = get_source_base_url(project, version)
 
     symbol_definitions, symbol_references, symbol_doccomments = q.query('ident', version, ident, family)
 
@@ -520,6 +537,7 @@ class RequestContextMiddleware:
 # Validates and unquotes project parameter
 class ProjectConverter(falcon.routing.BaseConverter):
     def convert(self, value: str):
+        value = parse.unquote(value)
         if re.match(r'^[a-zA-Z0-9-]+$', value):
             return value.strip()
 
@@ -540,6 +558,7 @@ class IdentConverter(falcon.routing.BaseConverter):
 # Returns default family if family is not valid
 class FamilyConverter(falcon.routing.BaseConverter):
     def convert(self, value: str):
+        value = parse.unquote(value)
         if not validFamily(value):
             value = 'C'
         return value
