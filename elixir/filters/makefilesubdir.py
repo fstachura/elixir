@@ -20,7 +20,7 @@ class MakefileSubdirFilter(Filter):
             n = encode_number(len(self.makefilesubdir))
             return f'{ m.group(1) }{ m.group(2) }{ m.group(3) }{ m.group(4) }__KEEPMAKESUBDIR__{ n }{ m.group(6) }'
 
-        return re.sub('(subdir-y)(\s+)(\+=|:=)(\s+)([-\w]+)(\s*|$)', keep_makefilesubdir, code, flags=re.MULTILINE)
+        return re.sub(r'(subdir-y)(\s+)(\+=|:=)(\s+)([-\w]+)(\s*|$)', keep_makefilesubdir, code, flags=re.MULTILINE)
 
     def untransform_formatted_code(self, ctx: FilterContext, html: str) -> str:
         def replace_makefilesubdir(m):
@@ -33,5 +33,5 @@ class MakefileSubdirFilter(Filter):
             npath = f'{ filedir }{ w }/Makefile'
             return f'<a href="{ ctx.get_absolute_source_url(npath) }">{ w }</a>'
 
-        return re.sub('__KEEPMAKESUBDIR__([A-J]+)', replace_makefilesubdir, html, flags=re.MULTILINE)
+        return re.sub(r'__KEEPMAKESUBDIR__([A-J]+)', replace_makefilesubdir, html, flags=re.MULTILINE)
 

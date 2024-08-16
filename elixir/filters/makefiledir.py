@@ -27,7 +27,7 @@ class MakefileDirFilter(Filter):
             else:
                 return m.group(0)
 
-        return re.sub('(?<=\s)([-\w/]+)/(\s+|$)', keep_makefiledir, code, flags=re.MULTILINE)
+        return re.sub(r'(?<=\s)([-\w/]+)/(\s+|$)', keep_makefiledir, code, flags=re.MULTILINE)
 
     def untransform_formatted_code(self, ctx: FilterContext, html: str) -> str:
         def replace_makefiledir(m):
@@ -41,5 +41,5 @@ class MakefileDirFilter(Filter):
 
             return f'<a href="{ ctx.get_absolute_source_url(fpath) }">{ w }/</a>'
 
-        return re.sub('__KEEPMAKEFILEDIR__([A-J]+)/', replace_makefiledir, html, flags=re.MULTILINE)
+        return re.sub(r'__KEEPMAKEFILEDIR__([A-J]+)/', replace_makefiledir, html, flags=re.MULTILINE)
 

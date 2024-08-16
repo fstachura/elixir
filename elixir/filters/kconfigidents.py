@@ -16,7 +16,7 @@ class KconfigIdentsFilter(Filter):
           self.kconfigidents.append(m.group(1))
           return f'__KEEPKCONFIGIDENTS__{ encode_number(len(self.kconfigidents)) }'
 
-      return re.sub('\033\[31m(?=CONFIG_)(.*?)\033\[0m', keep_kconfigidents, code, flags=re.MULTILINE)
+      return re.sub(r'\033\[31m(?=CONFIG_)(.*?)\033\[0m', keep_kconfigidents, code, flags=re.MULTILINE)
 
     def untransform_formatted_code(self, ctx: FilterContext, html: str) -> str:
         def replace_kconfigidents(m):
@@ -29,5 +29,5 @@ class KconfigIdentsFilter(Filter):
 
             return f'{ m.group(1) or "" }<a class="ident" href="{ ctx.get_ident_url(i, "K") }">{ n }</a>'
 
-        return re.sub('__(<.+?>)?KEEPKCONFIGIDENTS__([A-J]+)', replace_kconfigidents, html, flags=re.MULTILINE)
+        return re.sub(r'__(<.+?>)?KEEPKCONFIGIDENTS__([A-J]+)', replace_kconfigidents, html, flags=re.MULTILINE)
 

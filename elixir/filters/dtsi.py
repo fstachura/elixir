@@ -19,12 +19,12 @@ class DtsiFilter(Filter):
             self.dtsi.append(m.group(3))
             return f'{ m.group(1) }/include/{ m.group(2) }"__KEEPDTSI__{ encode_number(len(self.dtsi)) }"'
 
-        return re.sub('^(\s*)/include/(\s*)\"(.*?)\"', keep_dtsi, code, flags=re.MULTILINE)
+        return re.sub(r'^(\s*)/include/(\s*)\"(.*?)\"', keep_dtsi, code, flags=re.MULTILINE)
 
     def untransform_formatted_code(self, ctx: FilterContext, html: str) -> str:
         def replace_dtsi(m):
             w = self.dtsi[decode_number(m.group(1)) - 1]
             return f'<a href="{ ctx.get_relative_source_url(w) }">{ w }</a>'
 
-        return re.sub('__KEEPDTSI__([A-J]+)', replace_dtsi, html, flags=re.MULTILINE)
+        return re.sub(r'__KEEPDTSI__([A-J]+)', replace_dtsi, html, flags=re.MULTILINE)
 

@@ -18,12 +18,12 @@ class ConfigInFilter(Filter):
             self.configin.append(m.group(4))
             return f'{ m.group(1) }{ m.group(2) }{ m.group(3) }"__KEEPCONFIGIN__{ encode_number(len(self.configin)) }"'
 
-        return re.sub('^(\s*)(source)(\s*)\"(.*)\"', keep_configin, code, flags=re.MULTILINE)
+        return re.sub(r'^(\s*)(source)(\s*)\"(.*)\"', keep_configin, code, flags=re.MULTILINE)
 
     def untransform_formatted_code(self, ctx: FilterContext, html: str) -> str:
         def replace_configin(m):
             w = self.configin[decode_number(m.group(1)) - 1]
             return f'<a href="{ ctx.get_absolute_source_url(w) }">{ w }</a>'
 
-        return re.sub('__KEEPCONFIGIN__([A-J]+)', replace_configin, html, flags=re.MULTILINE)
+        return re.sub(r'__KEEPCONFIGIN__([A-J]+)', replace_configin, html, flags=re.MULTILINE)
 
