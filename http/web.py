@@ -69,7 +69,7 @@ def get_error_page(ctx, title, details=None):
 def stringify_source_path(project, version, path):
     if not path.startswith('/'):
         path = '/' + path
-    path = f'/{ project }/{ version }/source{ path }'
+    path = f'/{ project }/{ parse.quote(version, safe="") }/source{ path }'
     return path.rstrip('/')
 
 # Handles source URLs
@@ -111,7 +111,7 @@ class SourceWithoutPathResource(SourceResource):
 
 # Converts ParsedIdentPath to a string with corresponding URL path
 def stringify_ident_path(project, version, family, ident):
-    path = f'/{ project }/{ version }/{ family }/ident/{ ident }'
+    path = f'/{ project }/{ parse.quote(version, safe="") }/{ family }/ident/{ parse.quote(ident, safe="") }'
     return path.rstrip('/')
 
 # Handles redirect on a POST to ident resource
@@ -122,7 +122,7 @@ class IdentPostRedirectResource:
         post_family = str(form.get('f')).upper()
 
         if post_ident:
-            post_ident = parse.quote(post_ident.strip(), safe='/')
+            post_ident = post_ident.strip()
             new_path = stringify_ident_path(project, version, post_family, post_ident)
             raise falcon.HTTPFound(new_path)
         else:
@@ -132,25 +132,11 @@ class IdentPostRedirectResource:
 # See IdentPostRedirectResource for behavior on POST
 class IdentResource(IdentPostRedirectResource):
     def on_get(self, req, resp, project, version, family, ident):
-        # If identifier family extracted from the path is unknown,
-        # replace it with C - the default family.
-        # This also handles ident paths without a family,
-        # ex: https://elixir.bootlin.com/linux/v6.10/ident/ROOT_DEV
-        if not validFamily(family):
-            family = 'C'
-
         query = get_query(req.context.config.project_dir, project)
         if not query:
             resp.status = falcon.HTTP_NOT_FOUND
             resp.content_type = falcon.MEDIA_HTML
             resp.text = get_error_page(req.context, "Unknown project.")
-            return
-
-        # Check if identifier contains only allowed characters
-        if not ident or not search('^[A-Za-z0-9_\$\.%-]*$', ident):
-            resp.status = falcon.HTTP_BAD_REQUEST
-            resp.content_type = falcon.MEDIA_HTML
-            resp.text = get_error_page(req.context, "Identifier is invalid.")
             return
 
         if version == 'latest':
@@ -228,8 +214,8 @@ def get_layout_template_context(q, ctx, get_url_with_new_version, project, versi
         'versions': get_versions(q.query('versions'), get_url_with_new_version),
         'topbar_families': TOPBAR_FAMILIES,
 
-        'source_base_url': f'/{ project }/{ version }/source',
-        'ident_base_url': f'/{ project }/{ version }/ident',
+        'source_base_url': f'/{ project }/{ parse.quote(version, safe="") }/source',
+        'ident_base_url': f'/{ project }/{ parse.quote(version, safe="") }/ident',
         'current_project': project,
         'current_tag': parse.unquote(version),
         'current_family': 'A',
@@ -257,25 +243,23 @@ def format_code(filename, code):
 # version: requested version of the project
 # path: path to the file in the repository
 def generate_source(q, project, version, path):
-    version_unquoted = parse.unquote(version)
-    code = q.query('file', version_unquoted, path)
+    code = q.query('file', version, path)
 
     _, fname = os.path.split(path)
     _, extension = os.path.splitext(fname)
     extension = extension[1:].lower()
     family = q.query('family', fname)
 
-    source_base_url = f'/{ project }/{ version }/source'
+    source_base_url = f'/{ project }/{ parse.quote(version, safe="") }/source'
 
     def get_ident_url(ident, ident_family=None):
         if ident_family is None:
             ident_family = family
-        ident = parse.quote(ident, safe='')
         return stringify_ident_path(project, version, ident_family, ident)
 
     filter_ctx = FilterContext(
         q,
-        version_unquoted,
+        version,
         family,
         path,
         get_ident_url,
@@ -343,10 +327,9 @@ def get_directory_entries(q, base_url, tag, path):
 def generate_source_page(ctx, q, project, version, path):
     status = falcon.HTTP_OK
 
-    version_unquoted = parse.unquote(version)
-    source_base_url = f'/{ project }/{ version }/source'
+    source_base_url = f'/{ project }/{ parse.quote(version, safe="") }/source'
 
-    type = q.query('type', version_unquoted, path)
+    type = q.query('type', version, path)
 
     if type == 'tree':
         back_path = os.path.dirname(path[:-1])
@@ -354,7 +337,7 @@ def generate_source_page(ctx, q, project, version, path):
             back_path = ''
 
         template_ctx = {
-            'dir_entries': get_directory_entries(q, source_base_url, version_unquoted, path),
+            'dir_entries': get_directory_entries(q, source_base_url, version, path),
             'back_url': f'{ source_base_url }{ back_path }' if path != '' else None,
         }
         template = ctx.jinja_env.get_template('tree.html')
@@ -390,7 +373,7 @@ def generate_source_page(ctx, q, project, version, path):
     else:
         title_path = f'{ path_split[-1] } - { "/".join(path_split) } - '
 
-    get_url_with_new_version = lambda v: stringify_source_path(project, parse.quote(v, safe=''), path)
+    get_url_with_new_version = lambda v: stringify_source_path(project, v, path)
 
     # Create template context
     data = {
@@ -436,11 +419,9 @@ def symbol_instance_to_entry(base_url, symbol):
 def generate_ident_page(ctx, q, project, version, family, ident):
     status = falcon.HTTP_OK
 
-    version_unquoted = parse.unquote(version)
-    source_base_url = f'/{ project }/{ version }/source'
+    source_base_url = f'/{ project }/{ parse.quote(version, safe="") }/source'
 
-    ident_unquoted = parse.unquote(ident)
-    symbol_definitions, symbol_references, symbol_doccomments = q.query('ident', version_unquoted, ident_unquoted, family)
+    symbol_definitions, symbol_references, symbol_doccomments = q.query('ident', version, ident, family)
 
     symbol_sections = []
 
@@ -484,12 +465,12 @@ def generate_ident_page(ctx, q, project, version, family, ident):
         if ident != '':
             status = falcon.HTTP_NOT_FOUND
 
-    get_url_with_new_version = lambda v: stringify_ident_path(project, parse.quote(v, safe=''), family, ident)
+    get_url_with_new_version = lambda v: stringify_ident_path(project, v, family, ident)
 
     data = {
         **get_layout_template_context(q, ctx, get_url_with_new_version, project, version),
 
-        'searched_ident': ident_unquoted,
+        'searched_ident': ident,
         'current_family': family,
 
         'symbol_sections': symbol_sections,
@@ -536,6 +517,32 @@ class RequestContextMiddleware:
     def process_request(self, req, resp):
         req.context = get_request_context(req.env)
 
+# Validates and unquotes project parameter
+class ProjectConverter(falcon.routing.BaseConverter):
+    def convert(self, value: str):
+        if re.match(r'^[a-zA-Z0-9-]+$', value):
+            return value.strip()
+
+# Validates and unquotes version parameter
+class VersionConverter(falcon.routing.BaseConverter):
+    def convert(self, value: str):
+        value = parse.unquote(value)
+        if re.match(r'^[a-zA-Z0-9_.,:/-]+$', value):
+            return value.strip()
+
+# Validates and unquotes identifier parameter
+class IdentConverter(falcon.routing.BaseConverter):
+    def convert(self, value: str):
+        value = parse.unquote(value)
+        if re.match(r'^[A-Za-z0-9_,.+?#-]+$', value):
+            return value.strip()
+
+# Returns default family if family is not valid
+class FamilyConverter(falcon.routing.BaseConverter):
+    def convert(self, value: str):
+        if not validFamily(value):
+            value = 'C'
+        return value
 
 # Builds and returns the Falcon application
 def get_application():
@@ -543,16 +550,20 @@ def get_application():
         RawPathComponent(),
         RequestContextMiddleware(),
     ])
+    app.router_options.converters['project'] = ProjectConverter
+    app.router_options.converters['version'] = VersionConverter
+    app.router_options.converters['ident'] = IdentConverter
+    app.router_options.converters['family'] = IdentConverter
 
-    app.add_route('/{project}/{version}/source/{path:path}', SourceResource())
-    app.add_route('/{project}/{version}/source', SourceWithoutPathResource())
-    app.add_route('/{project}/{version}/ident', IdentPostRedirectResource())
-    app.add_route('/{project}/{version}/ident/{ident}', IdentWithoutFamilyResource())
-    app.add_route('/{project}/{version}/{family}/ident/{ident}', IdentResource())
+    app.add_route('/{project:project}/{version:version}/source/{path:path}', SourceResource())
+    app.add_route('/{project:project}/{version:version}/source', SourceWithoutPathResource())
+    app.add_route('/{project:project}/{version:version}/ident', IdentPostRedirectResource())
+    app.add_route('/{project:project}/{version:version}/ident/{ident:ident}', IdentWithoutFamilyResource())
+    app.add_route('/{project:project}/{version:version}/{family:family}/ident/{ident:ident}', IdentResource())
 
     app.add_route('/acp', AutocompleteResource())
 
-    app.add_route('/api/ident/{project}/{ident}', ApiIdentGetterResource())
+    app.add_route('/api/ident/{project:project}/{ident:ident}', ApiIdentGetterResource())
 
     return app
 
