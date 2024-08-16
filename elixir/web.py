@@ -28,26 +28,13 @@ from urllib import parse
 import falcon
 import jinja2
 
-# NOTE: this has to be done after falcon is imported as falcon import the standard
-# http package.
-# TODO: restructure the project to make imports more predictable
-ELIXIR_DIR = os.path.dirname(os.path.realpath(__file__)) + '/..'
-
-if ELIXIR_DIR not in sys.path:
-    sys.path = [ ELIXIR_DIR ] + sys.path
-
-HTTP_DIR = os.path.dirname(os.path.realpath(__file__))
-
-if HTTP_DIR not in sys.path:
-    sys.path = [ HTTP_DIR ] + sys.path
-
-from lib import validFamily
-from query import Query, SymbolInstance
-from filters import get_filters
-from filters.utils import FilterContext
-from autocomplete import AutocompleteResource
-from api import ApiIdentGetterResource
-from query import get_query
+from .lib import validFamily
+from .query import Query, SymbolInstance
+from .filters import get_filters
+from .filters.utils import FilterContext
+from .autocomplete import AutocompleteResource
+from .api import ApiIdentGetterResource
+from .query import get_query
 
 # Generated a Elixir error page
 def get_error_page(ctx, title, details=None):

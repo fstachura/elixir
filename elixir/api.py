@@ -24,7 +24,7 @@ import falcon
 from urllib import parse
 import sys
 
-from query import get_query
+from .query import get_query
 
 class ApiIdentGetterResource:
     def on_get(self, req, resp, project, ident):
