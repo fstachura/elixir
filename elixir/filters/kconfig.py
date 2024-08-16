@@ -19,12 +19,12 @@ class KconfigFilter(Filter):
             self.kconfig.append(m.group(4))
             return f'{ m.group(1) }{ m.group(2) }{ m.group(3) }"__KEEPKCONFIG__{ encode_number(len(self.kconfig)) }"'
 
-        return re.sub('^(\s*)(source)(\s*)\"([\w/_\.-]+)\"', keep_kconfig, code, flags=re.MULTILINE)
+        return re.sub(r'^(\s*)(source)(\s*)\"([\w/_\.-]+)\"', keep_kconfig, code, flags=re.MULTILINE)
 
     def untransform_formatted_code(self, ctx: FilterContext, html: str) -> str:
         def replace_kconfig(m):
             w = self.kconfig[decode_number(m.group(1)) - 1]
             return f'<a href="{ ctx.get_absolute_source_url(w) }">{ w }</a>'
 
-        return re.sub('__KEEPKCONFIG__([A-J]+)', replace_kconfig, html, flags=re.MULTILINE)
+        return re.sub(r'__KEEPKCONFIG__([A-J]+)', replace_kconfig, html, flags=re.MULTILINE)
 

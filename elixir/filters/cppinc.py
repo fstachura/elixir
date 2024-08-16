@@ -19,7 +19,7 @@ class CppIncFilter(Filter):
             self.cppinc.append(m.group(3))
             return f'{ m.group(1) }#include{ m.group(2) }"__KEEPCPPINC__{ encode_number(len(self.cppinc)) }"'
 
-        return re.sub('^(\s*)#include(\s*)\"(.*?)\"', keep_cppinc, code, flags=re.MULTILINE)
+        return re.sub(r'^(\s*)#include(\s*)\"(.*?)\"', keep_cppinc, code, flags=re.MULTILINE)
 
     def untransform_formatted_code(self, ctx: FilterContext, html: str) -> str:
         def replace_cppinc(m):
@@ -27,5 +27,5 @@ class CppIncFilter(Filter):
             url = ctx.get_relative_source_url(w)
             return f'<a href="{ url }">{ w }</a>'
 
-        return re.sub('__KEEPCPPINC__([A-J]+)', replace_cppinc, html, flags=re.MULTILINE)
+        return re.sub(r'__KEEPCPPINC__([A-J]+)', replace_cppinc, html, flags=re.MULTILINE)
 

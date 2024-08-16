@@ -30,7 +30,7 @@ class CppPathIncFilter(Filter):
                 self.cpppathinc.append(inc)
                 return f'{ m1 }#include{ m2 }<__KEEPCPPPATHINC__{ encode_number(len(self.cpppathinc)) }>'
 
-        return re.sub('^(\s*)#include(\s*)<(.*?)>', keep_cpppathinc, code, flags=re.MULTILINE)
+        return re.sub(r'^(\s*)#include(\s*)<(.*?)>', keep_cpppathinc, code, flags=re.MULTILINE)
 
     def untransform_formatted_code(self, ctx: FilterContext, html: str) -> str:
         def replace_cpppathinc(m):
@@ -38,5 +38,5 @@ class CppPathIncFilter(Filter):
             path = f'/include/{ w }'
             return f'<a href="{ ctx.get_absolute_source_url(path) }">{ w }</a>'
 
-        return re.sub('__KEEPCPPPATHINC__([A-J]+)', replace_cpppathinc, html, flags=re.MULTILINE)
+        return re.sub(r'__KEEPCPPPATHINC__([A-J]+)', replace_cpppathinc, html, flags=re.MULTILINE)
 
