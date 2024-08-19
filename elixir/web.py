@@ -573,8 +573,7 @@ def get_application():
     app.add_route('/{project:project}/{version:version}/ident/{ident:ident}', IdentWithoutFamilyResource())
     app.add_route('/{project:project}/{version:version}/{family:family}/ident/{ident:ident}', IdentResource())
 
-    app.add_route('/acp', AutocompleteResource())
-
+    app.add_route('/api/acp/{project:project}/{ident_prefix:ident}', AutocompleteResource())
     app.add_route('/api/ident/{project:project}/{version:version}/{ident:ident}', ApiIdentGetterResource())
 
     return app
