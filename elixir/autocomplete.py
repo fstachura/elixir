@@ -25,30 +25,26 @@ from urllib import parse
 from bsddb3.db import DB_SET_RANGE
 import falcon
 
-from .lib import autoBytes
+from .lib import autoBytes, validFamily
 from .query import get_query
 
 class AutocompleteResource:
-    def on_get(self, req, resp):
-        # Get values from http GET
-        query_string = req.get_param('q')
-        query_family = req.get_param('f')
-        query_project = req.get_param('p')
-
-        query = get_query(req.context.config.project_dir, query_project)
+    def on_get(self, req, resp, project, ident_prefix):
+        query = get_query(req.context.config.project_dir, project)
         if not query:
             resp.status = falcon.HTTP_NOT_FOUND
             return
 
-        latest = query.query('latest')
+        if 'family' in req.params and validFamily(req.params['family']):
+            family = req.params['family']
+        else:
+            family = 'C'
 
-        if query_family == 'B':
-            name = 'comps'
+        if family == 'B':
             # DTS identifiers are stored quoted
             process = lambda x: parse.unquote(x)
             db = query.db.comps
         else:
-            name = 'defs'
             process = lambda x: x
             db = query.db.defs
 
@@ -56,7 +52,7 @@ class AutocompleteResource:
 
         i = 0
         cur = db.db.cursor()
-        query_bytes = autoBytes(parse.quote(query_string))
+        query_bytes = autoBytes(parse.quote(ident_prefix))
         # Find "the smallest key greater than or equal to the specified key"
         # https://docs.oracle.com/cd/E17276_01/html/api_reference/C/dbcget.html
         # In practice this should mean "the key that starts with provided prefix"
