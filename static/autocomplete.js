@@ -20,7 +20,7 @@ var currentScript = document.currentScript;
 var AutoComplete = require('autocomplete-js');
 
 AutoComplete({
-    Url: "/acp",
+    Url: "/api/acp",
     Limit: 10,
     MinChars: 4,
     Delay: 500,
@@ -144,23 +144,21 @@ var AutoComplete = /** @class */ (function () {
         }
     };
     AutoComplete.prototype.makeRequest = function (params, callback, callbackErr) {
-        var propertyHttpHeaders = Object.getOwnPropertyNames(params.HttpHeaders), request = new XMLHttpRequest(), method = params._HttpMethod(), url = params._Url(), queryParams = params._Pre(), queryParamsStringify = encodeURIComponent(params._QueryArg()) + "=" + encodeURIComponent(queryParams);
-        if (method.match(/^GET$/i)) {
-            if (url.indexOf("?") !== -1) {
-                url += "&" + queryParamsStringify;
-            }
-            else {
-                url += "?" + queryParamsStringify;
-            }
-        }
+        var propertyHttpHeaders = Object.getOwnPropertyNames(params.HttpHeaders)
+        var request = new XMLHttpRequest();
+        var method = params._HttpMethod();
+
+        var ident = encodeURIComponent(params._Pre());
 
         // Send select family to display only relevant elements
         var e = document.getElementsByName("f")[0];
         var family = encodeURIComponent(e.options[e.selectedIndex].value);
-        url += "&f=" + encodeURIComponent(family);
 
         // Send project name
-        url += "&p=" + encodeURIComponent(currentScript.getAttribute('project'));
+        var project = encodeURIComponent(currentScript.getAttribute('project'));
+
+        var url = `${params._Url()}/${project}/${ident}`;
+        url += "?family=" + encodeURIComponent(family);
 
         request.open(method, url, true);
         for (var i = propertyHttpHeaders.length - 1; i >= 0; i--) {
@@ -170,7 +168,7 @@ var AutoComplete = /** @class */ (function () {
             if (request.readyState == 4 && request.status == 200) {
                 var e = document.getElementsByName("f")[0];
                 var family = encodeURIComponent(e.options[e.selectedIndex].value);
-                params.$Cache[family][queryParams] = request.response;
+                params.$Cache[family][ident] = request.response;
                 callback(request.response);
             }
             else if (request.status >= 400) {
@@ -198,8 +196,9 @@ var AutoComplete = /** @class */ (function () {
     AutoComplete.prototype.cache = function (params, callback, callbackErr) {
         var e = document.getElementsByName("f")[0];
         var family = encodeURIComponent(e.options[e.selectedIndex].value);
+        var ident = encodeURIComponent(params._Pre());
 
-        var response = params._Cache(family, params._Pre());
+        var response = params._Cache(family, ident);
         if (response === undefined) {
             var request = AutoComplete.prototype.makeRequest(params, callback, callbackErr);
             AutoComplete.prototype.ajax(params, request);
