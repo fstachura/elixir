@@ -149,6 +149,7 @@ var AutoComplete = /** @class */ (function () {
         var method = params._HttpMethod();
 
         var ident = encodeURIComponent(params._Pre());
+        var version = document.getElementsByClassName('version')[0].children[1].innerText;
 
         // Send select family to display only relevant elements
         var e = document.getElementsByName("f")[0];
@@ -157,7 +158,7 @@ var AutoComplete = /** @class */ (function () {
         // Send project name
         var project = encodeURIComponent(currentScript.getAttribute('project'));
 
-        var url = `${params._Url()}/${project}/${ident}`;
+        var url = `${params._Url()}/${project}/${version}/${ident}`;
         url += "?family=" + encodeURIComponent(family);
 
         request.open(method, url, true);
