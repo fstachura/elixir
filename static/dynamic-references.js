@@ -1,7 +1,7 @@
 "use strict";
 
 function identUrl(project, ident, version, family) {
-  return `/api/ident/${project}/${ident}?version=${version}&family=${family}`;
+  return `/api/ident/${project}/${version}/${ident}?family=${family}`;
 }
 
 /*
