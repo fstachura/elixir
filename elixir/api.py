@@ -25,23 +25,19 @@ from urllib import parse
 import sys
 
 from .query import get_query
+from .lib import validFamily
 
 class ApiIdentGetterResource:
-    def on_get(self, req, resp, project, ident):
+    def on_get(self, req, resp, project, version, ident):
         query = get_query(req.context.config.project_dir, project)
         if not query:
             resp.status = falcon.HTTP_NOT_FOUND
             return
 
-        if 'version' in req.params:
-            version = req.params['version']
-        else:
-            raise falcon.HTTPMissingParam('version')
-
         if version == 'latest':
             version = query.query('latest')
 
-        if 'family' in req.params:
+        if 'family' in req.params and validFamily(req.params['family']):
             family = req.params['family']
         else:
             family = 'C'

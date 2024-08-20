@@ -572,7 +572,7 @@ def get_application():
 
     app.add_route('/acp', AutocompleteResource())
 
-    app.add_route('/api/ident/{project}/{ident}', ApiIdentGetterResource())
+    app.add_route('/api/ident/{project:project}/{version:version}/{ident:ident}', ApiIdentGetterResource())
 
     return app
 
