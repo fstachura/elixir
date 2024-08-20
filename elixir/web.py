@@ -35,6 +35,7 @@ from .filters.utils import FilterContext
 from .autocomplete import AutocompleteResource
 from .api import ApiIdentGetterResource
 from .query import get_query
+from .web_utils import FamilyConverter, ProjectConverter, VersionConverter, IdentConverter, FamilyConverter
 
 # Generated a Elixir error page
 def get_error_page(ctx, title, details=None):
@@ -527,35 +528,6 @@ class RequestContextMiddleware:
     def process_request(self, req, resp):
         req.context = get_request_context(req.env)
 
-# Validates and unquotes project parameter
-class ProjectConverter(falcon.routing.BaseConverter):
-    def convert(self, value: str):
-        value = parse.unquote(value)
-        if re.match(r'^[a-zA-Z0-9-]+$', value):
-            return value.strip()
-
-# Validates and unquotes version parameter
-class VersionConverter(falcon.routing.BaseConverter):
-    def convert(self, value: str):
-        value = parse.unquote(value)
-        if re.match(r'^[a-zA-Z0-9_.,:/-]+$', value):
-            return value.strip()
-
-# Validates and unquotes identifier parameter
-class IdentConverter(falcon.routing.BaseConverter):
-    def convert(self, value: str):
-        value = parse.unquote(value)
-        if re.match(r'^[A-Za-z0-9_,.+?#-]+$', value):
-            return value.strip()
-
-# Returns default family if family is not valid
-class FamilyConverter(falcon.routing.BaseConverter):
-    def convert(self, value: str):
-        value = parse.unquote(value)
-        if not validFamily(value):
-            value = 'C'
-        return value
-
 # Builds and returns the Falcon application
 def get_application():
     app = falcon.App(middleware=[
@@ -565,7 +537,7 @@ def get_application():
     app.router_options.converters['project'] = ProjectConverter
     app.router_options.converters['version'] = VersionConverter
     app.router_options.converters['ident'] = IdentConverter
-    app.router_options.converters['family'] = IdentConverter
+    app.router_options.converters['family'] = FamilyConverter
 
     app.add_route('/{project:project}/{version:version}/source/{path:path}', SourceResource())
     app.add_route('/{project:project}/{version:version}/source', SourceWithoutPathResource())
@@ -575,7 +547,7 @@ def get_application():
 
     app.add_route('/acp', AutocompleteResource())
 
-    app.add_route('/api/ident/{project}/{ident}', ApiIdentGetterResource())
+    app.add_route('/api/ident/{project:project}/{ident:ident}', ApiIdentGetterResource())
 
     return app
 

@@ -25,6 +25,8 @@ from urllib import parse
 import sys
 
 from .query import get_query
+from .lib import validFamily
+from .web_utils import validate_version
 
 class ApiIdentGetterResource:
     def on_get(self, req, resp, project, ident):
@@ -34,14 +36,16 @@ class ApiIdentGetterResource:
             return
 
         if 'version' in req.params:
-            version = req.params['version']
+            version = validate_version(req.params['version'])
+            if version is None:
+                raise falcon.HTTPInvalidParam('version_invalid')
         else:
             raise falcon.HTTPMissingParam('version')
 
         if version == 'latest':
             version = query.query('latest')
 
-        if 'family' in req.params:
+        if 'family' in req.params and validFamily(req.params['family']):
             family = req.params['family']
         else:
             family = 'C'
