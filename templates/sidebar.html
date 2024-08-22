@@ -21,7 +21,9 @@
                 {% for minor, minor_versions in major_versions.items() %}
                     {% if minor == minor_versions[0] and minor_versions|length == 1 %}
                         <li class="li-link {{ 'active' if minor == current_tag else '' }}">
-                            <a href="{{ minor_versions[0].url }}">{{ minor_versions[0].version }}</a>
+                            <a {{ '' if is_root else 'rel="nofollow"' }} href="{{ minor_versions[0].url }}">
+                                {{ minor_versions[0].version }}
+                            </a>
                         </li>
                     {% else %}
                         <li>
@@ -29,7 +31,7 @@
                             <ul>
                                 {% for v in minor_versions %}
                                     <li class="li-link {{ 'active' if v.version == current_tag else '' }}">
-                                        <a href="{{ v.url }}">
+                                        <a {{ '' if is_root else 'rel="nofollow"' }} href="{{ v.url }}">
                                             {{ v.version }}
                                         </a>
                                     </li>

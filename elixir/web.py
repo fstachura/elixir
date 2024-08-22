@@ -347,6 +347,8 @@ def generate_source_page(ctx, q, project, version, path):
         template_ctx = {
             'dir_entries': get_directory_entries(q, source_base_url, version, path),
             'back_url': f'{ source_base_url }{ back_path }' if path != '' else None,
+            # Adds rel="nofollow" to version links if outside of root
+            'is_root': path.strip('/') == '',
         }
         template = ctx.jinja_env.get_template('tree.html')
     elif type == 'blob':
