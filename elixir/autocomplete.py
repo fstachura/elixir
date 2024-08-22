@@ -53,14 +53,9 @@ class AutocompleteResource:
         i = 0
         cur = db.db.cursor()
         query_bytes = autoBytes(parse.quote(ident_prefix))
-        # Find "the smallest key greater than or equal to the specified key"
-        # https://docs.oracle.com/cd/E17276_01/html/api_reference/C/dbcget.html
-        # In practice this should mean "the key that starts with provided prefix"
-        # See docs about the default comparison function for B-Tree databases:
-        # https://docs.oracle.com/cd/E17276_01/html/api_reference/C/dbset_bt_compare.html
-        key, _ = cur.get(query_bytes, DB_SET_RANGE)
-        while i <= 10:
-            if key.startswith(query_bytes):
+
+        for key, _ in db.iterate_from(query_bytes):
+            if i < 10 and key.startswith(query_bytes):
                 # If found key starts with the prefix, add to response
                 # and move to the next key
                 i += 1

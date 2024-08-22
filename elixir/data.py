@@ -18,12 +18,15 @@
 #  You should have received a copy of the GNU Affero General Public License
 #  along with Elixir.  If not, see <http://www.gnu.org/licenses/>.
 
-import bsddb3
 import re
-from .lib import autoBytes
 import os
 import os.path
 import errno
+from urllib import parse
+import bsddb3
+import bsddb3.db
+
+from .lib import autoBytes
 
 deflist_regex = re.compile(b'(\d*)(\w)(\d*)(\w),?')
 deflist_macro_regex = re.compile('\dM\d+(\w)')
@@ -145,9 +148,11 @@ class RefList:
         return self.data
 
 class BsdDB:
-    def __init__(self, filename, readonly, contentType):
+    def __init__(self, filename, readonly, value_converter):
         self.filename = filename
         self.db = bsddb3.db.DB()
+        self.value_converter = value_converter
+
         if readonly:
             self.db.open(filename, flags=bsddb3.db.DB_RDONLY)
         else:
@@ -155,7 +160,6 @@ class BsdDB:
                 flags=bsddb3.db.DB_CREATE,
                 mode=0o644,
                 dbtype=bsddb3.db.DB_BTREE)
-        self.ctype = contentType
 
     def exists(self, key):
         key = autoBytes(key)
@@ -163,12 +167,25 @@ class BsdDB:
 
     def get(self, key):
         key = autoBytes(key)
-        p = self.db.get(key)
-        p = self.ctype(p)
-        return p
+        value = self.db.get(key)
+        value = self.value_converter(value)
+        return value
 
     def get_keys(self):
         return self.db.keys()
+
+    # Finds "the smallest key greater than or equal to the specified key"
+    # https://docs.oracle.com/cd/E17276_01/html/api_reference/C/dbcget.html
+    # In practice this should mean "the key that starts with provided prefix"
+    # See docs about the default comparison function for B-Tree databases:
+    # https://docs.oracle.com/cd/E17276_01/html/api_reference/C/dbset_bt_compare.html
+    def iterate_from(self, key_prefix):
+        cur = self.db.cursor()
+        record = cur.get(key_prefix, bsddb3.db.DB_SET_RANGE)
+        while record:
+            key, value = record
+            yield key, self.value_converter(value)
+            record = cur.next()
 
     def put(self, key, val, sync=False):
         key = autoBytes(key)
