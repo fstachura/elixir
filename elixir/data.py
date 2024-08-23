@@ -199,20 +199,12 @@ class RawConverter:
     def from_bytes(self, value):
         return value
 
+# BerkeleyDB interface that automatically converts keys and values to/from desired type from/to bytes
 class BsdDB:
-    def __init__(self, filename, readonly, key_converter=DefaultKeyConverter(), value_converter=RawConverter()):
-        self.filename = filename
-        self.db = bsddb3.db.DB()
+    def __init__(self, db, key_converter=DefaultKeyConverter(), value_converter=RawConverter()):
+        self.db = db
         self.value_converter = value_converter
         self.key_converter = key_converter
-
-        if readonly:
-            self.db.open(filename, flags=bsddb3.db.DB_RDONLY)
-        else:
-            self.db.open(filename,
-                flags=bsddb3.db.DB_CREATE,
-                mode=0o644,
-                dbtype=bsddb3.db.DB_BTREE)
 
     def exists(self, key):
         key = self.key_converter.to_bytes(key)
@@ -257,6 +249,19 @@ class BsdDB:
     def close(self):
         self.db.close()
 
+def open_db(filename, readonly=False):
+    db = bsddb3.db.DB()
+
+    if readonly:
+        db.open(filename, flags=bsddb3.db.DB_RDONLY)
+    else:
+        db.open(filename,
+            flags=bsddb3.db.DB_CREATE,
+            mode=0o644,
+            dbtype=bsddb3.db.DB_BTREE)
+
+    return db
+
 class DB:
     def __init__(self, dir, readonly=True, dtscomp=False):
         if os.path.isdir(dir):
@@ -264,33 +269,62 @@ class DB:
         else:
             raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), dir)
 
+        self.dtscomp = dtscomp
         ro = readonly
 
         # Repo related variables. Currently it seems to only store the number of 
         #  indexed blobs, see numBlobs key. Not used outside of update.py
-        self.vars = BsdDB(dir + '/variables.db', ro, StringConverter(), IntConverter())
-        # Git blob hashes -> internal blob ids. Not used outside of update.py
-        self.blob = BsdDB(dir + '/blobs.db', ro, RawConverter(), IntConverter())
-        # Internal blob ids -> git blob hashes. Not used outside of update.py
-        self.hash = BsdDB(dir + '/hashes.db', ro, IntConverter(), RawConverter())
-        # Internal blob ids -> filenames. Not used outside of update.py
-        self.file = BsdDB(dir + '/filenames.db', ro, IntConverter(), StringConverter())
-        # Version name (tag) -> list of (internal blob id, file path) in that version.
-        #  Used in latest and versions query, and to make definitions list faster.
-        self.vers = BsdDB(dir + '/versions.db', ro, value_converter=ListConverter(PathList))
-        # Identifier -> list of definitions (file id, type, line, family)
-        self.defs = BsdDB(dir + '/definitions.db', ro, value_converter=ListConverter(DefList))
-        # Identifier -> list of references (file id, lines, family)
-        self.refs = BsdDB(dir + '/references.db', ro, value_converter=ListConverter(RefList))
-        # Identifier -> list of doccoments (file id, lines, family)
-        self.docs = BsdDB(dir + '/doccomments.db', ro, value_converter=ListConverter(RefList))
-        self.dtscomp = dtscomp
+        self.vars = BsdDB(
+                open_db(dir + '/variables.db', ro),
+                StringConverter(), IntConverter())
+
+        # Git blob hashes -> inteopen_db(rnal blob ids. Not used outside of update.py
+        self.blob = BsdDB(
+                open_db(dir + '/blobs.db', ro),
+                RawConverter(), IntConverter())
+
+        # Internal blob ids -> giopen_db(t blob hashes. Not used outside of update.py
+        self.hash = BsdDB(
+                open_db(dir + '/hashes.db', ro),
+                IntConverter(), RawConverter())
+
+        # Internal blob ids -> fiopen_db(lenames. Not used outside of update.py
+        self.file = BsdDB(
+                open_db(dir + '/filenames.db', ro),
+                IntConverter(), StringConverter())
+
+        # Version name (tag) -> lopen_db(ist of (internal blob id, file path) in that version.
+        #  Used in latest and veropen_db(sions query, and to make definitions list faster.
+        self.vers = BsdDB(
+                open_db(dir + '/versions.db', ro),
+                value_converter=ListConverter(PathList))
+
+        # Identifier -> list of dopen_db(efinitions (file id, type, line, family)
+        self.defs = BsdDB(
+                open_db(dir + '/definitions.db', ro),
+                value_converter=ListConverter(DefList))
+
+        # Identifier -> list of ropen_db(eferences (file id, lines, family)
+        self.refs = BsdDB(
+                open_db(dir + '/references.db', ro),
+                value_converter=ListConverter(RefList))
+
+        # Identifier -> list of dopen_db(occoments (file id, lines, family)
+        self.docs = BsdDB(
+                open_db(dir + '/doccomments.db', ro),
+                value_converter=ListConverter(RefList))
+
         if dtscomp:
             # DTS identifier -> list of references (file id, lines, family)
-            self.comps = BsdDB(dir + '/compatibledts.db', ro, QuotedKeyConverter(), ListConverter(RefList))
+            self.comps = BsdDB(
+                    open_db(dir + '/compatibledts.db', ro),
+                    QuotedStringConverter(), ListConverter(RefList))
+
             # DTS identifier -> list of doccoments (file id, lines, family)
-            self.comps_docs = BsdDB(dir + '/compatibledts_docs.db', ro, QuotedKeyConverter(), ListConverter(RefList))
             # Use a RefList in case there are multiple doc comments for an identifier
+            self.comps_docs = BsdDB(
+                    open_db(dir + '/compatibledts_docs.db', ro),
+                    QuotedStringConverter(), ListConverter(RefList))
 
     def close(self):
         self.vars.close()
@@ -304,3 +338,4 @@ class DB:
         if self.dtscomp:
             self.comps.close()
             self.comps_docs.close()
+
