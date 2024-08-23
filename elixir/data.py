@@ -130,11 +130,11 @@ class RefList:
         # Split all elements in a list of sublists and sort them
         entries = [x.split(b':') for x in self.data.split(b'\n')[:-1]]
         entries.sort(key=lambda x:int(x[0]))
-        for b, c, d in entries:
-            b = int(b.decode())
-            c = c.decode()
-            d = d.decode()
-            yield b, c, d
+        for file_id, lines, family in entries:
+            file_id = int(file_id.decode())
+            lines= lines.decode()
+            family= family.decode()
+            yield file_id, lines, family
         if dummy:
             yield maxId, None, None
 
@@ -145,6 +145,8 @@ class RefList:
     def pack(self):
         return self.data
 
+# Converts to/from a *List class (declared above)
+# Expects the class to have a constructor that accepts bytes, and a pack method that returns bytes
 class ListConverter:
     def __init__(self, list_cls):
         self.list_cls = list_cls
@@ -155,6 +157,7 @@ class ListConverter:
     def to_bytes(self, value):
         return value.pack()
 
+# Converts bytes to/from an integer
 class IntConverter:
     def to_bytes(self, value):
         return str(value).encode()
@@ -162,6 +165,7 @@ class IntConverter:
     def from_bytes(self, value):
         return int(value.decode())
 
+# Converts bytes to/from a UTF-8 string
 class StringConverter:
     def to_bytes(self, value):
         return value.encode()
@@ -169,38 +173,34 @@ class StringConverter:
     def from_bytes(self, value):
         return value.decode()
 
-class DefaultValueConverter:
+# Converts bytes to/from a UTF-8 string, quotes/unquotes when necessary
+class QuotedStringConverter:
+    def to_bytes(self, value):
+        return parse.quote(value).encode()
+
+    def from_bytes(self, value):
+        return parse.unquote(value.decode())
+
+# Auto converts a string to bytes but also accepts bytes, always converts to a string
+class DefaultKeyConverter:
+    def to_bytes(self, value):
+        if type(value) is str:
+            value = value.encode()
+        return value
+
+    def from_bytes(self, value):
+        return value.decode()
+
+# Does not do any conversions
+class RawConverter:
     def to_bytes(self, value):
         return value
 
     def from_bytes(self, value):
         return value
 
-class QuotedKeyConverter:
-    def to_bytes(self, key):
-        return parse.quote(key).encode()
-
-    def from_bytes(self, key):
-        return parse.unquote(key.decode())
-
-class DefaultKeyConverter:
-    def to_bytes(self, key):
-        if type(key) is str:
-            key= key.encode()
-        return key
-
-    def from_bytes(self, key):
-        return key.decode()
-
-class RawConverter:
-    def to_bytes(self, key):
-        return key
-
-    def from_bytes(self, key):
-        return key
-
 class BsdDB:
-    def __init__(self, filename, readonly, value_converter=DefaultValueConverter(), key_converter=DefaultKeyConverter()):
+    def __init__(self, filename, readonly, value_converter=RawConverter(), key_converter=DefaultKeyConverter()):
         self.filename = filename
         self.db = bsddb3.db.DB()
         self.value_converter = value_converter
@@ -266,21 +266,29 @@ class DB:
 
         ro = readonly
 
+        # Repo related variables. Currently it seems to only store the number of 
+        #  indexed blobs, see numBlobs key. Not used outside of update.py
         self.vars = BsdDB(dir + '/variables.db', ro, IntConverter(), StringConverter())
-            # Key-value store of basic information
+        # Git blob hashes -> internal blob ids. Not used outside of update.py
         self.blob = BsdDB(dir + '/blobs.db', ro, IntConverter(), RawConverter())
-            # Map hash to sequential integer serial number
+        # Internal blob ids -> git blob hashes. Not used outside of update.py
         self.hash = BsdDB(dir + '/hashes.db', ro, RawConverter(), IntConverter())
-            # Map serial number back to hash
+        # Internal blob ids -> filenames. Not used outside of update.py
         self.file = BsdDB(dir + '/filenames.db', ro, StringConverter(), IntConverter())
-            # Map serial number to filename
+        # Version name (tag) -> list of (internal blob id, file path) in that version.
+        #  Used in latest and versions query, and to make definitions list faster.
         self.vers = BsdDB(dir + '/versions.db', ro, ListConverter(PathList))
+        # Identifier -> list of definitions (file id, type, line, family)
         self.defs = BsdDB(dir + '/definitions.db', ro, ListConverter(DefList))
+        # Identifier -> list of references (file id, lines, family)
         self.refs = BsdDB(dir + '/references.db', ro, ListConverter(RefList))
+        # Identifier -> list of doccoments (file id, lines, family)
         self.docs = BsdDB(dir + '/doccomments.db', ro, ListConverter(RefList))
         self.dtscomp = dtscomp
         if dtscomp:
+            # DTS identifier -> list of references (file id, lines, family)
             self.comps = BsdDB(dir + '/compatibledts.db', ro, ListConverter(RefList), QuotedKeyConverter())
+            # DTS identifier -> list of doccoments (file id, lines, family)
             self.comps_docs = BsdDB(dir + '/compatibledts_docs.db', ro, ListConverter(RefList), QuotedKeyConverter())
             # Use a RefList in case there are multiple doc comments for an identifier
 
