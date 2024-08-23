@@ -200,7 +200,7 @@ class RawConverter:
         return value
 
 class BsdDB:
-    def __init__(self, filename, readonly, value_converter=RawConverter(), key_converter=DefaultKeyConverter()):
+    def __init__(self, filename, readonly, key_converter=DefaultKeyConverter(), value_converter=RawConverter()):
         self.filename = filename
         self.db = bsddb3.db.DB()
         self.value_converter = value_converter
@@ -268,28 +268,28 @@ class DB:
 
         # Repo related variables. Currently it seems to only store the number of 
         #  indexed blobs, see numBlobs key. Not used outside of update.py
-        self.vars = BsdDB(dir + '/variables.db', ro, IntConverter(), StringConverter())
+        self.vars = BsdDB(dir + '/variables.db', ro, StringConverter(), IntConverter())
         # Git blob hashes -> internal blob ids. Not used outside of update.py
-        self.blob = BsdDB(dir + '/blobs.db', ro, IntConverter(), RawConverter())
+        self.blob = BsdDB(dir + '/blobs.db', ro, RawConverter(), IntConverter())
         # Internal blob ids -> git blob hashes. Not used outside of update.py
-        self.hash = BsdDB(dir + '/hashes.db', ro, RawConverter(), IntConverter())
+        self.hash = BsdDB(dir + '/hashes.db', ro, IntConverter(), RawConverter())
         # Internal blob ids -> filenames. Not used outside of update.py
-        self.file = BsdDB(dir + '/filenames.db', ro, StringConverter(), IntConverter())
+        self.file = BsdDB(dir + '/filenames.db', ro, IntConverter(), StringConverter())
         # Version name (tag) -> list of (internal blob id, file path) in that version.
         #  Used in latest and versions query, and to make definitions list faster.
-        self.vers = BsdDB(dir + '/versions.db', ro, ListConverter(PathList))
+        self.vers = BsdDB(dir + '/versions.db', ro, value_converter=ListConverter(PathList))
         # Identifier -> list of definitions (file id, type, line, family)
-        self.defs = BsdDB(dir + '/definitions.db', ro, ListConverter(DefList))
+        self.defs = BsdDB(dir + '/definitions.db', ro, value_converter=ListConverter(DefList))
         # Identifier -> list of references (file id, lines, family)
-        self.refs = BsdDB(dir + '/references.db', ro, ListConverter(RefList))
+        self.refs = BsdDB(dir + '/references.db', ro, value_converter=ListConverter(RefList))
         # Identifier -> list of doccoments (file id, lines, family)
-        self.docs = BsdDB(dir + '/doccomments.db', ro, ListConverter(RefList))
+        self.docs = BsdDB(dir + '/doccomments.db', ro, value_converter=ListConverter(RefList))
         self.dtscomp = dtscomp
         if dtscomp:
             # DTS identifier -> list of references (file id, lines, family)
-            self.comps = BsdDB(dir + '/compatibledts.db', ro, ListConverter(RefList), QuotedKeyConverter())
+            self.comps = BsdDB(dir + '/compatibledts.db', ro, QuotedKeyConverter(), ListConverter(RefList))
             # DTS identifier -> list of doccoments (file id, lines, family)
-            self.comps_docs = BsdDB(dir + '/compatibledts_docs.db', ro, ListConverter(RefList), QuotedKeyConverter())
+            self.comps_docs = BsdDB(dir + '/compatibledts_docs.db', ro, QuotedKeyConverter(), ListConverter(RefList))
             # Use a RefList in case there are multiple doc comments for an identifier
 
     def close(self):
