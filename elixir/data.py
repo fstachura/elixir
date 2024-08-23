@@ -26,8 +26,6 @@ from urllib import parse
 import bsddb3
 import bsddb3.db
 
-from .lib import autoBytes
-
 deflist_regex = re.compile(b'(\d*)(\w)(\d*)(\w),?')
 deflist_macro_regex = re.compile('\dM\d+(\w)')
 
@@ -147,11 +145,66 @@ class RefList:
     def pack(self):
         return self.data
 
+class ListConverter:
+    def __init__(self, list_cls):
+        self.list_cls = list_cls
+
+    def from_bytes(self, value):
+        return self.list_cls(value)
+
+    def to_bytes(self, value):
+        return value.pack()
+
+class IntConverter:
+    def to_bytes(self, value):
+        return str(value).encode()
+
+    def from_bytes(self, value):
+        return int(value.decode())
+
+class StringConverter:
+    def to_bytes(self, value):
+        return value.encode()
+
+    def from_bytes(self, value):
+        return value.decode()
+
+class DefaultValueConverter:
+    def to_bytes(self, value):
+        return value
+
+    def from_bytes(self, value):
+        return value
+
+class QuotedKeyConverter:
+    def to_bytes(self, key):
+        return parse.quote(key).encode()
+
+    def from_bytes(self, key):
+        return parse.unquote(key.decode())
+
+class DefaultKeyConverter:
+    def to_bytes(self, key):
+        if type(key) is str:
+            key= key.encode()
+        return key
+
+    def from_bytes(self, key):
+        return key.decode()
+
+class RawConverter:
+    def to_bytes(self, key):
+        return key
+
+    def from_bytes(self, key):
+        return key
+
 class BsdDB:
-    def __init__(self, filename, readonly, value_converter):
+    def __init__(self, filename, readonly, value_converter=DefaultValueConverter(), key_converter=DefaultKeyConverter()):
         self.filename = filename
         self.db = bsddb3.db.DB()
         self.value_converter = value_converter
+        self.key_converter = key_converter
 
         if readonly:
             self.db.open(filename, flags=bsddb3.db.DB_RDONLY)
@@ -162,14 +215,13 @@ class BsdDB:
                 dbtype=bsddb3.db.DB_BTREE)
 
     def exists(self, key):
-        key = autoBytes(key)
+        key = self.key_converter.to_bytes(key)
         return self.db.exists(key)
 
     def get(self, key):
-        key = autoBytes(key)
+        key = self.key_converter.to_bytes(key)
         value = self.db.get(key)
-        value = self.value_converter(value)
-        return value
+        return self.value_converter.from_bytes(value)
 
     def get_keys(self):
         return self.db.keys()
@@ -181,20 +233,26 @@ class BsdDB:
     # https://docs.oracle.com/cd/E17276_01/html/api_reference/C/dbset_bt_compare.html
     def iterate_from(self, key_prefix):
         cur = self.db.cursor()
-        record = cur.get(key_prefix, bsddb3.db.DB_SET_RANGE)
+        record = cur.get(self.key_converter.to_bytes(key_prefix), bsddb3.db.DB_SET_RANGE)
         while record:
             key, value = record
-            yield key, self.value_converter(value)
+            yield self.key_converter.from_bytes(key), self.value_converter.from_bytes(value)
             record = cur.next()
 
-    def put(self, key, val, sync=False):
-        key = autoBytes(key)
-        val = autoBytes(val)
-        if type(val) is not bytes:
-            val = val.pack()
+    def put(self, key, val):
+        key = self.key_converter.to_bytes(key)
+        val = self.value_converter.to_bytes(val)
+        self.put_raw(key, val)
+
+    def put_raw_value(self, key, val: bytes):
+        key = self.key_converter.to_bytes(key)
+        self.put_raw(key, val)
+
+    def put_raw(self, key: bytes, val: bytes):
         self.db.put(key, val)
-        if sync:
-            self.db.sync()
+
+    def sync(self):
+        self.db.sync()
 
     def close(self):
         self.db.close()
@@ -208,22 +266,22 @@ class DB:
 
         ro = readonly
 
-        self.vars = BsdDB(dir + '/variables.db', ro, lambda x: int(x.decode()) )
+        self.vars = BsdDB(dir + '/variables.db', ro, IntConverter(), StringConverter())
             # Key-value store of basic information
-        self.blob = BsdDB(dir + '/blobs.db', ro, lambda x: int(x.decode()) )
+        self.blob = BsdDB(dir + '/blobs.db', ro, IntConverter(), RawConverter())
             # Map hash to sequential integer serial number
-        self.hash = BsdDB(dir + '/hashes.db', ro, lambda x: x )
+        self.hash = BsdDB(dir + '/hashes.db', ro, RawConverter(), IntConverter())
             # Map serial number back to hash
-        self.file = BsdDB(dir + '/filenames.db', ro, lambda x: x.decode() )
+        self.file = BsdDB(dir + '/filenames.db', ro, StringConverter(), IntConverter())
             # Map serial number to filename
-        self.vers = BsdDB(dir + '/versions.db', ro, PathList)
-        self.defs = BsdDB(dir + '/definitions.db', ro, DefList)
-        self.refs = BsdDB(dir + '/references.db', ro, RefList)
-        self.docs = BsdDB(dir + '/doccomments.db', ro, RefList)
+        self.vers = BsdDB(dir + '/versions.db', ro, ListConverter(PathList))
+        self.defs = BsdDB(dir + '/definitions.db', ro, ListConverter(DefList))
+        self.refs = BsdDB(dir + '/references.db', ro, ListConverter(RefList))
+        self.docs = BsdDB(dir + '/doccomments.db', ro, ListConverter(RefList))
         self.dtscomp = dtscomp
         if dtscomp:
-            self.comps = BsdDB(dir + '/compatibledts.db', ro, RefList)
-            self.comps_docs = BsdDB(dir + '/compatibledts_docs.db', ro, RefList)
+            self.comps = BsdDB(dir + '/compatibledts.db', ro, ListConverter(RefList), QuotedKeyConverter())
+            self.comps_docs = BsdDB(dir + '/compatibledts_docs.db', ro, ListConverter(RefList), QuotedKeyConverter())
             # Use a RefList in case there are multiple doc comments for an identifier
 
     def close(self):
@@ -238,4 +296,3 @@ class DB:
         if self.dtscomp:
             self.comps.close()
             self.comps_docs.close()
-

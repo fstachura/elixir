@@ -18,14 +18,9 @@
 #  You should have received a copy of the GNU Affero General Public License
 #  along with Elixir.  If not, see <http://www.gnu.org/licenses/>.
 
-import sys
-import os
-import json
-from urllib import parse
-from bsddb3.db import DB_SET_RANGE
 import falcon
 
-from .lib import autoBytes, validFamily
+from .lib import validFamily
 from .query import get_query
 
 class AutocompleteResource:
@@ -42,24 +37,21 @@ class AutocompleteResource:
 
         if family == 'B':
             # DTS identifiers are stored quoted
-            process = lambda x: parse.unquote(x)
             db = query.db.comps
         else:
-            process = lambda x: x
             db = query.db.defs
 
         response = []
 
         i = 0
         cur = db.db.cursor()
-        query_bytes = autoBytes(parse.quote(ident_prefix))
 
-        for key, _ in db.iterate_from(query_bytes):
-            if i < 10 and key.startswith(query_bytes):
+        for key, _ in db.iterate_from(ident_prefix):
+            if i < 10 and key.startswith(ident_prefix):
                 # If found key starts with the prefix, add to response
                 # and move to the next key
                 i += 1
-                response.append(process(key.decode("utf-8")))
+                response.append(key)
                 key, _ = cur.next()
             else:
                 # If found key does not start with the prefix, stop

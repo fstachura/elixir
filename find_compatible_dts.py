@@ -59,7 +59,7 @@ class FindCompatibleDTS:
                 ret = self.parse_bindings(line)
 
             for i in range(len(ret)):
-                ident_list.append(str(parse.quote(ret[i])) + ' ' + str(num))
+                ident_list.append((ret[i], num))
 
         return ident_list
 

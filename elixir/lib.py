@@ -18,6 +18,7 @@
 #  You should have received a copy of the GNU Affero General Public License
 #  along with Elixir.  If not, see <http://www.gnu.org/licenses/>.
 
+from sys import argv
 import subprocess, os
 
 CURRENT_DIR = os.path.abspath(os.path.dirname(os.path.abspath(__file__)) + '/..')
@@ -176,13 +177,6 @@ def isIdent(bstr):
         return False
     else:
         return True
-
-def autoBytes(arg):
-    if type(arg) is str:
-        arg = arg.encode()
-    elif type(arg) is int:
-        arg = str(arg).encode()
-    return arg
 
 def getDataDir():
     try:

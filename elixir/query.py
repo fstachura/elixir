@@ -18,14 +18,14 @@
 #  You should have received a copy of the GNU Affero General Public License
 #  along with Elixir.  If not, see <http://www.gnu.org/licenses/>.
 
-from .lib import script, scriptLines, decode
-from . import lib
-from . import data
 import os
 from collections import OrderedDict
 from urllib import parse
-
 from io import BytesIO
+
+from .lib import script, scriptLines, decode
+from . import lib
+from . import data
 
 class SymbolInstance(object):
     def __init__(self, path, line, type=None):
@@ -277,9 +277,6 @@ class Query:
         symbol_c = []
         symbol_dts = []
         symbol_docs = []
-
-        # DT compatible strings are quoted in the database
-        ident = parse.quote(ident)
 
         if not self.dts_comp_support or not self.db.comps.exists(ident):
             return symbol_c, symbol_dts, symbol_docs

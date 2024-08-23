@@ -121,7 +121,7 @@ class UpdateIds(Thread):
             if not blob_exist:
                 with hash_file_lock:
                     db.hash.put(idx, hash)
-                    db.file.put(idx, filename)
+                    db.file.put_raw_value(idx, filename)
 
                 new_idxes.append(idx)
                 if verbose:
@@ -186,7 +186,8 @@ class UpdateVersions(Thread):
 
             if verbose:
                 print(f"Tag {tag}: adding #{idx} {path}")
-        db.vers.put(tag, obj, sync=True)
+        db.vers.put(tag, obj)
+        db.vers.sync()
 
 
 class UpdateDefs(Thread):
@@ -446,9 +447,7 @@ class UpdateComps(Thread):
 
             lines = compatibles_parser.run(scriptLines('get-blob', hash), family)
             comps = {}
-            for l in lines:
-                ident, line = l.split(' ')
-
+            for ident, line in lines:
                 if ident in comps:
                     comps[ident] += ',' + str(line)
                 else:

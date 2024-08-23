@@ -21,7 +21,6 @@
 import logging
 import os
 import re
-import sys
 from collections import OrderedDict, namedtuple
 from re import search, sub
 from urllib import parse
@@ -29,7 +28,6 @@ import falcon
 import jinja2
 
 from .lib import validFamily
-from .query import Query, SymbolInstance
 from .filters import get_filters
 from .filters.utils import FilterContext
 from .autocomplete import AutocompleteResource
