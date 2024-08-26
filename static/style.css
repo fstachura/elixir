@@ -404,6 +404,9 @@ h2 {
           box-shadow: 0 0 0 1px #666;
 }
 
+#file-raw-link {
+  margin-left: 1rem;
+}
 
 /* sidebar */
 
