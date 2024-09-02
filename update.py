@@ -22,13 +22,16 @@
 # Throughout, an "idx" is the sequential number associated with a blob.
 # This is different from that blob's Git hash.
 
+import sys
 from sys import argv
 from threading import Thread, Lock, Event, Condition
 
+from elixir.lexers import TokenType
 import elixir.lib as lib
 from elixir.lib import script, scriptLines
 import elixir.data as data
 from elixir.data import PathList
+from elixir.lexers import get_lexer
 from find_compatible_dts import FindCompatibleDTS
 
 verbose = False
@@ -300,33 +303,43 @@ class UpdateRefs(Thread):
             family = lib.getFileFamily(filename)
             if family == None: continue
 
+            lexer = get_lexer(filename)
+            if lexer is None:
+                continue
+
+            try:
+                code = script('get-blob', hash).decode()
+            except UnicodeDecodeError:
+                code = script('get-blob', hash).decode('raw_unicode_escape')
+
+            tokens = lexer(code)
+
             prefix = b''
             # Kconfig values are saved as CONFIG_<value>
             if family == 'K':
                 prefix = b'CONFIG_'
 
-            tokens = scriptLines('tokenize-file', '-b', hash, family)
-            even = True
-            line_num = 1
             idents = {}
             with defs_lock:
-                for tok in tokens:
-                    even = not even
-                    if even:
-                        tok = prefix + tok
+                for token_type, token, _, line in tokens:
+                    if token_type == TokenType.ERROR:
+                        print("error token: ", token, token_type, filename, line, file=sys.stderr)
+                        continue
 
-                        if (db.defs.exists(tok) and
-                            not ( (idx*idx_key_mod + line_num) in defs_idxes and
-                                defs_idxes[idx*idx_key_mod + line_num] == tok ) and
-                            (family != 'M' or tok.startswith(b'CONFIG_'))):
-                            # We only index CONFIG_??? in makefiles
-                            if tok in idents:
-                                idents[tok] += ',' + str(line_num)
-                            else:
-                                idents[tok] = str(line_num)
+                    token = prefix + token.encode()
 
-                    else:
-                        line_num += tok.count(b'\1')
+                    if token_type != TokenType.IDENTIFIER:
+                        continue
+
+                    if (db.defs.exists(token) and
+                        not ( (idx*idx_key_mod + line) in defs_idxes and
+                            defs_idxes[idx*idx_key_mod + line] == token ) and
+                        (family != 'M' or token.startswith(b'CONFIG_'))):
+                        # We only index CONFIG_??? in makefiles
+                        if token in idents:
+                            idents[token] += ',' + str(line)
+                        else:
+                            idents[token] = str(line)
 
             with refs_lock:
                 for ident, lines in idents.items():
