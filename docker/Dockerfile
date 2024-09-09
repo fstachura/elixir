@@ -49,7 +49,9 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
 COPY . /usr/local/elixir/
 
-RUN mkdir -p /srv/elixir-data/
+RUN mkdir -p /srv/elixir-data/ && chown www-data:www-data /srv/elixir-data/
+ENV LXR_PROJ_DIR=/srv/elixir-data/
+VOLUME /srv/elixir-data/
 
 COPY ./docker/000-default.conf /etc/apache2/sites-available/000-default.conf
 

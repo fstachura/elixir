@@ -1,5 +1,12 @@
 #!/bin/sh
 
+if [ `whoami` = 'root' ] && [ "$ELIXIR_RUN_AS_ROOT" != '1' ]; then
+    echo "WARNING: it's not recommended to run Elixir indexing jobs as root."
+    echo "This may cause git to complain about directory ownership on web requests"
+    echo "To continue running as root, set ELIXIR_RUN_AS_ROOT environment variable to 1."
+    exit 1
+fi
+
 if [ "$#" -ne 2 ]; then
     echo "Usage: $0 repo_name repo_url"
     exit 1
@@ -9,7 +16,6 @@ dir=/srv/elixir-data/$1
 
 mkdir -p $dir/data
 git clone --bare $2 $dir/repo
-git config --system --add safe.directory $dir/repo
 
 export LXR_REPO_DIR=$dir/repo
 export LXR_DATA_DIR=$dir/data

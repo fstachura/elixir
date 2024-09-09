@@ -298,18 +298,27 @@ This allows you to easily replace the container with a new version without losin
  # mkdir ./elixir-data
  # docker run -v ./elixir-data/:/srv/elixir-data -d --name elixir-container elixir
 
+If you are using a bind mount to mount the data directory, like in the example above, changing permissions of the mounted directory is necessary.
+
+ # docker exec -it elixir-container bash -c 'chown :www-data /srv/elixir-data && chmod g=rwx /srv/elixir-data'
+
 The Docker image does not contain any repositories. To index a repository, you can use a utility script - index-repository.
 For example, to add musl repository, run:
 
- # docker exec -it -e PYTHONUNBUFFERED=1 elixir-container /usr/local/elixir/utils/index-repository musl https://git.musl-libc.org/git/musl
+ # docker exec -it -e PYTHONUNBUFFERED=1 -u www-data elixir-container /usr/local/elixir/utils/index-repository musl https://git.musl-libc.org/git/musl
 
 Without PYTHONUNBUFFERED environment variable, update logs may show up with a delay.
 
 Or, to run indexing in a separate container:
 
- # docker run -e PYTHONUNBUFFERED=1 -v ./elixir-data/:/srv/elixir-data --entrypoint /usr/local/elixir/utils/index-repository elixir musl https://git.musl-libc.org/git/musl
+ # docker run -e PYTHONUNBUFFERED=1 -u www-data -v ./elixir-data/:/srv/elixir-data --entrypoint /usr/local/elixir/utils/index-repository elixir musl https://git.musl-libc.org/git/musl
 
 You can also use utils/index-all-repositories to start indexing all officially supported repositories.
+
+Note: it's recommended to run update jobs as the user used by the HTTP server. Otherwise, Elixir may complain about repository ownership.
+If repositories used by Elixir cannot be owned by the HTTP server user, `git config --system --add safe.directory repo_path`,
+or making the repository as https://git-scm.com/docs/git-init#Documentation/git-init.txt-codeeverybodycode[shared]
+may be used instead.
 
 After indexing is done, Elixir should be available under the following URL on your host:
 http://172.17.0.2/musl/latest/source
@@ -323,6 +332,8 @@ If 172.17.0.2 does not answer, you can check the IP address of the container by 
 The Docker image does not automatically update repositories by itself.
 You can, for example, start `utils/update-elixir-data` in the container (or in a separate container, with Elixir data volume/directory mounted)
 from cron on the host to periodically update repositories.
+
+ # docker run -u www-data -v ./elixir-data/:/srv/elixir-data --entrypoint /usr/local/elixir/utils/update-elixir-data elixir
 
 == Using Docker image as a development server
 
