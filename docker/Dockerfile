@@ -33,7 +33,7 @@ RUN \
     libyaml-0-2 \
     wget
 
-COPY . /usr/local/elixir/
+COPY requirements.txt /usr/local/elixir/
 
 WORKDIR /usr/local/elixir/
 
@@ -43,6 +43,8 @@ RUN python3 -m venv venv && \
     . ./venv/bin/activate && \
     pip install /tmp/build/bsddb3-6.2.9-*.whl && \
     pip install -r requirements.txt
+
+COPY . /usr/local/elixir/
 
 RUN mkdir -p /srv/elixir-data/
 
