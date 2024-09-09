@@ -22,9 +22,11 @@ def split_by_groups(*token_types):
         line = ctx.line
         for gi in range(len(match.groups())):
             token = match.group(gi+1)
-            yield Token(token_types[gi], token, (pos, pos+len(token)), line)
-            line += token.count("\n")
-            pos += len(token)
+            if len(token) != 0:
+                action = token_types[gi]
+                yield Token(action, token, (pos, pos+len(token)), line)
+                line += token.count("\n")
+                pos += len(token)
 
     return split
 
@@ -47,6 +49,12 @@ def token_from_match(ctx, match, token_type):
     new_ctx = ctx._replace(pos=span[1], line=ctx.line+result.token.count('\n'))
     return result, new_ctx
 
+def token_from_string(ctx, match, token_type):
+    span = (ctx.pos, ctx.pos+len(match))
+    result = Token(token_type, ctx.code[span[0]:span[1]], span, ctx.line)
+    new_ctx = ctx._replace(pos=span[1], line=ctx.line+result.token.count('\n'))
+    return result, new_ctx
+
 # https://en.cppreference.com/w/c/language
 # https://www.iso-9899.info/wiki/The_Standard
 
@@ -54,15 +62,12 @@ c_multline_comment = r'/\*(.|\s)*?\*/'
 c_singleline_comment = r'//(\\\s*\n|[^\n])*\n'
 c_comment = f'(({ c_multline_comment })|({ c_singleline_comment }))'
 
-c_string = r'"([^\\"]|\\(.|\s))*?"'
+c_string = r'"(\\\s*\n|[^\\"\n]|\\(.|\s))*?"'
 
 # technically not valid c, but should cover all valid escape cases
-single_quote_string = r"'([^\\']|\\(.|\s))*?'"
+single_quote_string = r"'(\\\s*\n|[^\\'\n]|\\(.|\s))*?'"
 
 c_string_and_char = f'(({ single_quote_string })|({ c_string }))'
-
-# not entirely correct... accepts way more than the standard allows
-c_number_suffix = r'([uU]|[lL]|(wb|WB)|[fF]){0,5}'
 
 c_decimal_integer = r'[+-]?[0-9][0-9\']*'
 c_hexidecimal_integer = r'[+-]?0[xX][0-9a-fA-F][0-9a-fA-F\']*'
@@ -80,10 +85,13 @@ c_decimal = f'{ c_decimal_integer }({ c_decimal_double_part })?'
 c_hexidecimal = f'{ c_hexidecimal_integer }({ c_hexidecimal_double_part })?'
 c_octal = f'{ c_octal_integer }({ c_decimal_double_part })?'
 
+# not entirely correct... accepts way more than the standard allows
+c_number_suffix = r'([uU]|[lL]|(wb|WB)|[fF]){0,5}'
+
 c_number = f'(({ c_hexidecimal })|({ c_binary_integer })|({ c_decimal })|({ c_octal }))({ c_number_suffix })'
 
 c_angled_include = r'#\s*include\s*<.*?>'
-c_warning_and_error = r'#\s*(warning|error)(\\\s*\n|[^\n])*\n'
+c_warning_and_error = r'#\s*(warning|error)\s(\\\s*\n|[^\n])*\n'
 c_special = f'(({ c_angled_include })|({ c_warning_and_error }))'
 
 whitespace = r'\s+'
@@ -115,28 +123,89 @@ C_rules = [
 
 # https://www.devicetree.org/specifications/
 
-# handles both property and node names
-# technically identifiers in dts can be up to 31 characters long, but this limitation does not apply to defines...
-# identifiers also probably can in practice start with special characters and end with special characters, 
-# but telling an identifier with a comma apart from two identifiers separated by a comma would require more context
-# dependent information. let's try the simple way, for now
-# NOTE: previous versions would split identifiers by commas, this might have been intended?
-dts_identifier = r'[0-9a-zA-Z_][0-9a-zA-Z,._+?#-]*[0-9a-zA-Z_]'
+# TODO handle macros separately
+
+# NOTE: previous versions would split identifiers by commas (and other special characters),
+# this changes the old behavior
 dts_single_char_identifier = r'[0-9a-zA-Z_]'
 
-# 2.2.1, groups should be split in rules. it's not exactly a number...
-dts_unit_address = r'(@)([0-9a-zA-Z,._+-]+)'
+# 6.2
+dts_label = r'[a-zA-Z_][a-zA-Z_0-9]{0,30}'
+# no whitespace between label and ampersand/colon is allowed
+dts_label_reference = f'(&)({ dts_label })'
+dts_label_definition = f'({ dts_label })(:)'
+
+# 2.2.1
+dts_node_name = r'[a-zA-Z0-9,._+-]{1,31}'
+# can contain macro symbols
+dts_unit_address = r'[a-zA-Z0-9,._+-]*'
+
+dts_node_name_with_unit_address = f'({ dts_node_name })(@)({ dts_unit_address })' + r'(\s*)({)'
+dts_node_name_without_unit_address = f'({ dts_node_name })' + r'(\s*)({)'
+
+# 2.2.4
+dts_property_name = r'[0-9a-zA-Z,._+?#-]{1,31}'
+dts_property_assignment = f'({ dts_property_name })' + r'(\s*)(=)'
+dts_property_empty = f'({ dts_property_name })' + r'(\s*)(;)'
+
+# 6.3
+dts_node_reference = r'(&)({)([a-zA-Z0-9,._+/@-]+?)(})'
 
 dts_punctuation = r'[#@:;{}\[\]()^<>=+*/%&\\|~!?,-]'
+# other, unknown, identifiers - for exmple macros
+dts_default_identifier = r'[a-zA-Z_][0-9a-zA-Z_]*'
+
+def parse_dts_node_reference(ctx, match):
+    # &
+    token, ctx = token_from_string(ctx, match.group(1), TokenType.PUNCTUATION)
+    yield token
+
+    # {
+    token, ctx = token_from_string(ctx, match.group(2), TokenType.PUNCTUATION)
+    yield token
+
+    path = match.group(3)
+    path_part_matcher = re.compile(dts_unit_address)
+    strpos = 0
+
+    while strpos < len(path):
+        if path[strpos] == '@' or path[strpos] == '/':
+            token, ctx = token_from_string(ctx, path[strpos], TokenType.PUNCTUATION)
+            yield token
+            strpos += 1
+        else:
+            part_match = path_part_matcher.match(path, strpos)
+            if part_match is None:
+                token, _ = token_from_string(ctx, TokenType.ERROR, '')
+                yield token
+                return None
+
+            token, ctx = token_from_string(ctx, part_match.group(0), TokenType.IDENTIFIER)
+            yield token
+            strpos += len(part_match.group(0))
+    # }
+    token, ctx = token_from_string(ctx, match.group(4), TokenType.PUNCTUATION)
+    yield token
 
 DTS_rules = [
     (whitespace, TokenType.WHITESPACE),
     (c_comment, TokenType.COMMENT),
     (c_string_and_char, TokenType.STRING),
     (c_number, TokenType.NUMBER),
-    (dts_identifier, TokenType.IDENTIFIER),
+
+    (dts_label_reference, split_by_groups(TokenType.PUNCTUATION, TokenType.IDENTIFIER)),
+    (dts_label_definition, split_by_groups(TokenType.IDENTIFIER, TokenType.PUNCTUATION)),
+    (dts_node_reference, parse_dts_node_reference),
+
+    (dts_property_assignment, split_by_groups(TokenType.IDENTIFIER, TokenType.WHITESPACE, TokenType.PUNCTUATION)),
+    (dts_property_empty, split_by_groups(TokenType.IDENTIFIER, TokenType.WHITESPACE, TokenType.PUNCTUATION)),
+
+    (dts_node_name_with_unit_address, split_by_groups(TokenType.IDENTIFIER, TokenType.PUNCTUATION,
+                                                      TokenType.IDENTIFIER, TokenType.WHITESPACE, TokenType.PUNCTUATION)),
+    (dts_node_name_without_unit_address, split_by_groups(TokenType.IDENTIFIER, TokenType.WHITESPACE, TokenType.PUNCTUATION)),
+
+    (dts_default_identifier, TokenType.IDENTIFIER),
     (c_angled_include, TokenType.SPECIAL),
-    (dts_unit_address, split_by_groups(TokenType.PUNCTUATION, TokenType.SPECIAL)),
     (dts_punctuation, TokenType.PUNCTUATION),
     (dts_single_char_identifier, TokenType.IDENTIFIER),
 ]
@@ -144,22 +213,23 @@ DTS_rules = [
 # https://www.kernel.org/doc/html/next/kbuild/kconfig-language.html#kconfig-syntax
 # https://www.kernel.org/doc/html/next/kbuild/kconfig-language.html#kconfig-hints
 
-# TODO better help support
-# TODO better macros support
+# TODO better macros calls support
 
 hash_comment = r'#(\\\s*\n|[^\n])*\n'
 
-# NOTE: matches only uppercase identifiers - this saves us from parsing macro calls, at least for now
-kconfig_identifier = r'[A-Z0-9_][A-Z0-9_-]*'
+# NOTE pretty much all kconfig identifiers either start uppercase or with a number. this saves us from parsing macro calls
+kconfig_identifier = r'[A-Z0-9_][A-Z0-9a-z_a-]*'
 # other perhaps interesting identifiers
 kconfig_minor_identifier = r'[a-zA-Z0-9_/][a-zA-Z0-9_/.-]*'
 kconfig_punctuation = r'[|&!=$()/_.+<>,-]'
 kconfig_double_quote_string = r'"[^\n]*?"'
 kconfig_single_quote_string = r"'[^\n]*?'"
 kconfig_string = f'(({ kconfig_double_quote_string })|({ kconfig_single_quote_string }))'
+kconfig_number = f'[0-9]+'
 
-# NOTE no identifiers are parsed out of KConfig help texts now
-# for example see all instances of USB in /u-boot/v2024.07/source/drivers/usb/Kconfig#L3 
+# NOTE no identifiers are parsed out of KConfig help texts now, this changes the
+# old behavior
+# for example see all instances of USB in /u-boot/v2024.07/source/drivers/usb/Kconfig#L3
 
 def count_kconfig_help_whitespace(start_whitespace_str):
     tabs = start_whitespace_str.count('\t')
@@ -227,9 +297,10 @@ KCONFIG_rules = [
     (whitespace, TokenType.WHITESPACE),
     (hash_comment, TokenType.COMMENT),
     (kconfig_string, TokenType.STRING),
+    (kconfig_number, TokenType.NUMBER),
     # for whatever reason u-boot kconfigs sometimes use ---help--- instead of help
     # /u-boot/v2024.07/source/arch/arm/mach-sunxi/Kconfig#L732
-    (r'-*help-*', parse_kconfig_help_text),
+    (r'-+help-+', parse_kconfig_help_text),
     (kconfig_punctuation, TokenType.PUNCTUATION),
     (r'help', parse_kconfig_help_text),
     (kconfig_identifier, TokenType.IDENTIFIER),
@@ -265,10 +336,38 @@ gasm_string = f'(({ c_string })|({ gasm_char }))'
 # architectures that are supported in linux - i didn't research the niche ones).
 # SH and SPARC use ! for comments, but ! is sometimes used for something else in arm64.
 # same with @. ; is often used to separate statements...
-# this (matching space after comment character) is works 99% of the time. but not 100%. 
-# for 100% i believe the lexer will need hints about the context, and the only way to 
-# provide these hints i see is to provide a map of directories that belong to problematic 
+# this (matching space after comment character) is works 99% of the time. but not 100%.
+# for 100% i believe the lexer will need hints about the context, and the only way to
+# provide these hints i see is to provide a map of directories that belong to problematic
 # architectures.
+
+gasm_base_comment =  r'(\\\s*\n|[^\n])*\n'
+
+gasm_comment_chars_map = {
+    'nios2': ('#',),
+    'openrisc': ('#',),
+    'powerpc': ('#',),
+    's390': ('#',),
+    'xtensa': ('#',),
+    'microblaze': ('#',),
+    'mips': ('#',),
+    'alpha': ('#',),
+    'csky': ('#',),
+    'score': ('#',),
+    'parisc': (';',),
+    'x86': (';',),
+    'tic6x': (';', '*'), # cx6, tms320, although the star is sketchy
+
+    # technically # can be a comment if first character of the line
+    'sh': ('!',),
+    'sparc': ('!',),
+    'm68k': ('|',), # BUT double pipe in macros is an operator... and # not in the first line in m68k/ifpsp060/src/fplsp.S
+    'arc': ('#',';'),
+    'arm32': ('@',),
+    'cris': (';',),
+    'avr': (';',),
+    # blackfin, tile
+}
 
 # NOTE hash comments can be preproc directives if there is only whitespace before them
 # or sometimes not? depending on architecture
