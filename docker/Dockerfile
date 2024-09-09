@@ -44,6 +44,9 @@ RUN python3 -m venv venv && \
     pip install /tmp/build/bsddb3-6.2.9-*.whl && \
     pip install -r requirements.txt
 
+ENV VIRTUAL_ENV=/usr/local/elixir/venv
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
 COPY . /usr/local/elixir/
 
 RUN mkdir -p /srv/elixir-data/
