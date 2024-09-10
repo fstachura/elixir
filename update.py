@@ -592,6 +592,7 @@ tag_buf = []
 for tag in scriptLines('list-tags'):
     if not db.vers.exists(tag):
         tag_buf.append(tag)
+        break
 
 num_tags = len(tag_buf)
 project = lib.currentProject()
