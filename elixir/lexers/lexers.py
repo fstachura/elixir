@@ -4,7 +4,8 @@ from . import shared
 from .utils import TokenType, Token, \
         simple_lexer, split_by_groups, \
         match_token, token_from_match, token_from_string, \
-        regex_or
+        regex_or, \
+        if_first_in_line
 
 # Lexers used to extract possible references from source files
 # Design strongly inspired by Pygments lexers
@@ -32,12 +33,13 @@ class CLexer:
         (shared.common_string_and_char, TokenType.STRING),
         (shared.c_number, TokenType.NUMBER),
         (c_identifier, TokenType.IDENTIFIER),
-        (shared.c_preproc_ignore, TokenType.SPECIAL),
+        (if_first_in_line(shared.c_preproc_ignore), TokenType.SPECIAL),
         (c_punctuation, TokenType.PUNCTUATION),
         (c_punctuation_extra, TokenType.PUNCTUATION),
     ]
 
-    def __init__(self, code):
+    def __init__(self, path, code):
+        self.path = path
         self.code = code
 
     def lex(self):
@@ -121,12 +123,16 @@ class DTSLexer:
         (dts_label_definition, split_by_groups(TokenType.IDENTIFIER, TokenType.PUNCTUATION)),
         (dts_node_reference, parse_dts_node_reference),
 
-        (dts_property_assignment, split_by_groups(TokenType.IDENTIFIER, TokenType.WHITESPACE, TokenType.PUNCTUATION)),
-        (dts_property_empty, split_by_groups(TokenType.IDENTIFIER, TokenType.WHITESPACE, TokenType.PUNCTUATION)),
+        (dts_property_assignment, 
+         split_by_groups(TokenType.IDENTIFIER, TokenType.WHITESPACE, TokenType.PUNCTUATION)),
+        (dts_property_empty, 
+         split_by_groups(TokenType.IDENTIFIER, TokenType.WHITESPACE, TokenType.PUNCTUATION)),
 
-        (dts_node_name_with_unit_address, split_by_groups(TokenType.IDENTIFIER, TokenType.PUNCTUATION,
-                                                          TokenType.IDENTIFIER, TokenType.WHITESPACE, TokenType.PUNCTUATION)),
-        (dts_node_name_without_unit_address, split_by_groups(TokenType.IDENTIFIER, TokenType.WHITESPACE, TokenType.PUNCTUATION)),
+        (dts_node_name_with_unit_address, 
+         split_by_groups(TokenType.IDENTIFIER, TokenType.PUNCTUATION,
+                    TokenType.IDENTIFIER, TokenType.WHITESPACE, TokenType.PUNCTUATION)),
+        (dts_node_name_without_unit_address, 
+         split_by_groups(TokenType.IDENTIFIER, TokenType.WHITESPACE, TokenType.PUNCTUATION)),
 
         (dts_default_identifier, TokenType.IDENTIFIER),
         (shared.c_preproc_ignore, TokenType.SPECIAL),
@@ -134,7 +140,8 @@ class DTSLexer:
         (dts_single_char_identifier, TokenType.IDENTIFIER),
     ]
 
-    def __init__(self, code):
+    def __init__(self, path, code):
+        self.path = path
         self.code = code
 
     def lex(self):
@@ -245,7 +252,8 @@ class KconfigLexer:
         (r'[^\n]+', TokenType.SPECIAL),
     ]
 
-    def __init__(self, code):
+    def __init__(self, path, code):
+        self.path = path
         self.code = code
 
     def lex(self):
@@ -253,7 +261,7 @@ class KconfigLexer:
 
 
 # https://sourceware.org/binutils/docs/as.html#Syntax
-class GasmLexer:
+class GasLexer:
     # https://sourceware.org/binutils/docs/as.html#Symbol-Intro
     # apparently dots are okay, BUT ctags removes the first dot from labels, for example. same with dollars
     # /musl/v1.2.5/source/src/string/aarch64/memcpy.S#L92
@@ -282,6 +290,8 @@ class GasmLexer:
     # architectures.
 
     gasm_comment_chars_map = {
+        'generic': ('#',),
+
         'nios2': ('#',),
         'openrisc': ('#',),
         'powerpc': ('#',),
@@ -291,67 +301,82 @@ class GasmLexer:
         'mips': ('#',),
         'alpha': ('#',),
         'csky': ('#',),
-        'score': ('#',),
+        
+
+        # https://sourceware.org/binutils/docs/as.html#HPPA-Syntax
+        # /linux/v6.10.7/source/arch/parisc/kernel/perf_asm.S#L28
         'parisc': (';',),
         'x86': (';',),
         'tic6x': (';', '*'), # cx6, tms320, although the star is sketchy
 
-        # technically # can be a comment if first character of the line
+        # in below, # can be a comment only if the first character of the line
+
+        # https://sourceware.org/binutils/docs/as.html#SH-Syntax
+        # /linux/v6.10.7/source/arch/sh/kernel/head_32.S#L58
         'sh': ('!', '^#'),
+        # https://sourceware.org/binutils/docs/as.html#Sparc_002dSyntax
+        # /linux/v6.10.7/source/arch/sparc/lib/memset.S#L125
         'sparc': ('!', '^#'),
-        'm68k': ('|', '^#'), # BUT double pipe in macros is an operator... and # not in the first line in m68k/ifpsp060/src/fplsp.S
+        # BUT double pipe in macros is an operator... and # not in the first line in 
+        # m68k/ifpsp060/src/fplsp.S
+        'm68k': ('|', '^#'), 
         'arc': ('#',';' '^#'),
+        # used in ARM https://sourceware.org/binutils/docs/as.html#ARM-Syntax
+        # /linux/v6.10.7/source/arch/arm/mach-sa1100/sleep.S#L33
         'arm32': ('@', '^#'),
         'cris': (';', '^#'),
         'avr': (';', '^#'),
         # blackfin, tile
     }
 
-    whitespace_single_newline = '[ \t]*\n'
-
-    # NOTE hash comments can be preproc directives if there is only whitespace before them
-    # or sometimes not? depending on architecture
-    # also apparently if it starts with a number then it's a special line directive, but this probably is not interesting
-    gasm_hash_comment = r'#(\s*\n|\s+[^0-9\s].*\n)'
-
-    # used in HPPA (PA-RISC) https://sourceware.org/binutils/docs/as.html#HPPA-Syntax
-    # /linux/v6.10.7/source/arch/parisc/kernel/perf_asm.S#L28
-    gasm_semicolon_comment = r';\s+[a-zA-Z0-9](\s*\n|\s*[^0-9\s].*\n)'
-    # used in SH https://sourceware.org/binutils/docs/as.html#SH-Syntax
-    # /linux/v6.10.7/source/arch/sh/kernel/head_32.S#L58
-    # and SPARC https://sourceware.org/binutils/docs/as.html#Sparc_002dSyntax
-    # /linux/v6.10.7/source/arch/sparc/lib/memset.S#L125
-    gasm_exclamation_comment = r'!\s+[a-zA-Z0-9](\s*\n|\s*[^0-9\s].*\n)'
-    # used in ARM https://sourceware.org/binutils/docs/as.html#ARM-Syntax
-    # /linux/v6.10.7/source/arch/arm/mach-sa1100/sleep.S#L33
-    gasm_at_comment = r'@\s+[a-zA-Z0-9](\s*\n|\s*[^0-9\s].*\n)'
-
-    # there are also pipe comments, but some archs use pipes for binary operations
-
-    gasm_comment = regex_or(shared.common_slash_comment, gasm_hash_comment, gasm_semicolon_comment,
-                            gasm_exclamation_comment, gasm_at_comment)
-
     gasm_punctuation = r'[.,\[\]()<>{}%&+*!|@#$;:^/\\=~-]'
-    # TODO check if first in line
     gasm_preprocessor = r'#[ \t]*(define|ifdef|ifndef|undef|if|else|elif)'
 
-    rules = [
+    rules_before_comments = [
         (shared.whitespace, TokenType.WHITESPACE),
-        # don't interpret macro concatenate as comment
+        # don't interpret macro concatenate as a comment
         ('##', TokenType.PUNCTUATION),
-        (gasm_preprocessor, TokenType.PUNCTUATION),
-        (gasm_comment, TokenType.COMMENT),
+        # don't interpret pipe as a comment
+        ('||', TokenType.PUNCTUATION),
+        (if_first_in_line(gasm_preprocessor), TokenType.SPECIAL),
+        (shared.common_slash_comment, TokenType.COMMENT),
+    ]
+
+    rules_after_comments = [
         (gasm_string, TokenType.STRING),
         (gasm_number, TokenType.NUMBER),
         (gasm_identifier, TokenType.IDENTIFIER),
         (gasm_punctuation, TokenType.PUNCTUATION),
     ]
 
-    def __init__(self, code):
+    def __init__(self, path, code, arch='generic'):
         self.code = code
+        self.comment_chars = self.gasm_comment_chars_map[arch]
+
+    def get_arch_rules(self):
+        result = []
+
+        for comment_char in self.comment_chars:
+            if comment_char[0] == '^':
+                result.append((
+                    if_first_in_line(comment_char[1] + shared.singleline_comment_with_escapes_base),
+                    TokenType.COMMENT
+                ))
+            else:
+                result.append((
+                    comment_char + shared.singleline_comment_with_escapes_base, 
+                    TokenType.COMMENT)
+                )
+
+        return result
 
     def lex(self):
-        return simple_lexer(self.rules, self.code)
+        rules = self.rules_before_comments + \
+                self.get_arch_rules() + \
+                self.rules_after_comments
+
+        print(rules)
+        return simple_lexer(rules, self.code)
 
 
 # https://www.gnu.org/software/make/manual/make.html
@@ -378,7 +403,8 @@ class MakefileLexer:
         (make_punctuation, TokenType.PUNCTUATION),
     ]
 
-    def __init__(self, code):
+    def __init__(self, path, code):
+        self.path = path
         self.code = code
 
     def lex(self):
@@ -396,7 +422,8 @@ class DefaultLexer:
         (r'.', TokenType.PUNCTUATION),
     ]
 
-    def __init__(self, code):
+    def __init__(self, path, code):
+        self.path = path
         self.code = code
 
     def lex(self):

@@ -17,6 +17,7 @@ common_octal_integer = r'[+-]?0[0-7][0-7\']*'
 common_binary_integer = r'[+-]?0[bB][01][01\']*'
 
 c_preproc_angled_include = r'#\s*include\s*<.*?>'
+# match warning and error directives with the error string
 c_preproc_warning_and_error = r'#\s*(warning|error)\s(\\\s*\n|[^\n])*\n'
 c_preproc_ignore = regex_or(c_preproc_angled_include, c_preproc_warning_and_error)
 

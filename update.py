@@ -183,6 +183,7 @@ class UpdateVersions(Thread):
         for idx, path in buf:
             obj.append(idx, path)
 
+
             # Store DT bindings documentation files to parse them later
             if path[:33] == b'Documentation/devicetree/bindings':
                 bindings_idxes.append(idx)
@@ -312,7 +313,7 @@ class UpdateRefs(Thread):
             except UnicodeDecodeError:
                 code = script('get-blob', hash).decode('raw_unicode_escape')
 
-            tokens = lexer(code)
+            tokens = lexer(filename, code)
 
             prefix = b''
             # Kconfig values are saved as CONFIG_<value>

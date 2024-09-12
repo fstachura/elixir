@@ -55,7 +55,25 @@ def token_from_string(ctx, match, token_type):
     new_ctx = ctx._replace(pos=span[1], line=ctx.line+result.token.count('\n'))
     return result, new_ctx
 
-LexerContext = namedtuple('LexerContext', 'code, pos, line')
+def match_regex(regex):
+    rule = re.compile(regex, flags=re.MULTILINE)
+    return lambda code, pos, _, __: rule.match(code, pos)
+
+def if_first_in_line(regex):
+    rule = re.compile(regex, flags=re.MULTILINE)
+    def match(code, pos, line, prev_token):
+        if pos == 0:
+            return rule.match(code, pos)
+
+        newline_pos = prev_token.token.rfind('\n')
+        if newline_pos != -1:
+            post_newline_tok = prev_token.token[newline_pos+1:]
+            if re.fullmatch('\w*', post_newline_tok):
+                return rule.match(code, pos)
+
+    return match
+
+LexerContext = namedtuple('LexerContext', 'code, pos, line, prev_token')
 
 def simple_lexer(rules, code):
     if len(code) == 0:
@@ -64,13 +82,22 @@ def simple_lexer(rules, code):
     if code[-1] != '\n':
         code += '\n'
 
-    rules = [(re.compile(rule, flags=re.MULTILINE|re.UNICODE), action) for rule, action in rules]
+    rules_compiled = []
+
+    for rule, action in rules:
+        if type(rule) is str:
+            rules_compiled.append((match_regex(rule), action))
+        else:
+            rules_compiled.append((rule, action))
+
     pos = 0
     line = 1
+    prev_token = None
     while pos < len(code):
         rule_matched = False
-        for rule, action in rules:
-            match = rule.match(code, pos)
+        for rule, action in rules_compiled:
+            match = rule(code, pos, line, prev_token)
+
             if match is not None:
                 span = match.span()
                 if span[0] == span[1]:
@@ -79,7 +106,9 @@ def simple_lexer(rules, code):
 
                 if isinstance(action, TokenType):
                     token = code[span[0]:span[1]]
-                    yield Token(action, token, span, line)
+                    token_obj = Token(action, token, span, line)
+                    prev_token = token_obj
+                    yield token_obj
                     line += token.count('\n')
                     pos = span[1]
                     break
@@ -92,13 +121,16 @@ def simple_lexer(rules, code):
                     if last_token is not None:
                         pos = last_token.span[1]
                         line = last_token.line + last_token.token.count('\n')
+                        prev_token = last_token
 
                     break
                 else:
                     raise Exception(f"invalid action {action}")
 
         if not rule_matched:
-            yield Token(TokenType.ERROR, code[pos], (pos, pos+1), line)
+            token = Token(TokenType.ERROR, code[pos], (pos, pos+1), line)
+            yield token
+            prev_token = token
             if code[pos] == '\n':
                 line += 1
             pos += 1
