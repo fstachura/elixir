@@ -175,7 +175,7 @@ class Query:
 
             filename = os.path.basename(path)
             family = lib.getFileFamily(filename)
-            lexer = get_lexer(filename)
+            lexer = get_lexer(path)
 
             if family is not None and lexer is not None:
                 buffer = BytesIO()
@@ -185,7 +185,7 @@ class Query:
                 if family == 'K':
                     prefix = b'CONFIG_'
 
-                for token_type, token, _, line in lexer(code):
+                for token_type, token, _, line in lexer(code).lex():
                     token = token.encode()
 
                     if token_type == TokenType.ERROR:

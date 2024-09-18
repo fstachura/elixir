@@ -59,6 +59,7 @@ new_idxes = [] # (new idxes, Event idxes ready, Event defs ready, Event comps re
 bindings_idxes = [] # DT bindings documentation files
 idx_key_mod = 1000000
 defs_idxes = {} # Idents definitions stored with (idx*idx_key_mod + line) as the key.
+file_paths = {}
 
 tags_done = False # True if all tags have been added to new_idxes
 
@@ -166,7 +167,7 @@ class UpdateVersions(Thread):
         progress('vers: Thread finished', index)
 
     def update_versions(self, tag):
-        global blobs_lock
+        global blobs_lock, file_paths
 
         # Get blob hashes and associated file paths
         blobs = scriptLines('list-blobs', '-p', tag)
@@ -177,6 +178,7 @@ class UpdateVersions(Thread):
             with blobs_lock:
                 idx = db.blob.get(hash)
             buf.append((idx, path))
+            file_paths[idx] = path
 
         buf = sorted(buf)
         obj = PathList()
@@ -279,6 +281,7 @@ class UpdateRefs(Thread):
 
             new_idxes[self.index][1].wait() # Make sure the tag is ready
             new_idxes[self.index][2].wait() # Make sure UpdateDefs processed the tag
+            new_idxes[self.index][4].wait() # Tell that UpdateVersions processed the tag
 
             with tags_refs_lock:
                 tags_refs[0] += 1
@@ -292,14 +295,14 @@ class UpdateRefs(Thread):
             progress('refs: Thread ' + str(tags_refs[1]) + '/' + str(self.inc) + ' finished', tags_refs[0])
 
     def update_references(self, idxes):
-        global hash_file_lock, defs_lock, refs_lock, tags_refs
+        global hash_file_lock, defs_lock, refs_lock, tags_refs, file_paths
 
         for idx in idxes:
             if idx % 1000 == 0: progress('refs: ' + str(idx), tags_refs[0])
 
             with hash_file_lock:
                 hash = db.hash.get(idx)
-                filename = db.file.get(idx)
+                filename = file_paths[idx].decode()
 
             family = lib.getFileFamily(filename)
             if family == None: continue
@@ -313,8 +316,6 @@ class UpdateRefs(Thread):
             except UnicodeDecodeError:
                 code = script('get-blob', hash).decode('raw_unicode_escape')
 
-            tokens = lexer(filename, code)
-
             prefix = b''
             # Kconfig values are saved as CONFIG_<value>
             if family == 'K':
@@ -322,7 +323,7 @@ class UpdateRefs(Thread):
 
             idents = {}
             with defs_lock:
-                for token_type, token, _, line in tokens:
+                for token_type, token, _, line in lexer(code).lex():
                     if token_type == TokenType.ERROR:
                         print("error token: ", token, token_type, filename, line, file=sys.stderr)
                         continue

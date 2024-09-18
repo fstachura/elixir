@@ -1,6 +1,9 @@
 import re
 import enum
+import sys
 from collections import namedtuple
+
+from elixir.lexers import shared
 
 # Supported token types
 class TokenType(enum.Enum):
@@ -57,23 +60,42 @@ def token_from_string(ctx, match, token_type):
 
 def match_regex(regex):
     rule = re.compile(regex, flags=re.MULTILINE)
-    return lambda code, pos, _, __: rule.match(code, pos)
+    return lambda code, pos, _: rule.match(code, pos)
 
-def if_first_in_line(regex):
-    rule = re.compile(regex, flags=re.MULTILINE)
-    def match(code, pos, line, prev_token):
+class Matcher:
+    def update_after_match(self, code: str, pos: int, line: int, token: Token) -> None:
+        pass
+
+    def match(self, code: str, pos: int, line: int) -> None | re.Match:
+        pass
+
+class FirstInLine(Matcher):
+    def __init__(self, regex):
+        self.rule = re.compile(regex, flags=re.MULTILINE)
+        self.first_in_line = True
+
+    def update_after_match(self, code, pos, line, token):
         if pos == 0:
-            return rule.match(code, pos)
+            self.first_in_line = True
+            return
 
-        newline_pos = prev_token.token.rfind('\n')
+        newline_pos = token.token.rfind('\n')
+
         if newline_pos != -1:
-            post_newline_tok = prev_token.token[newline_pos+1:]
-            if re.fullmatch('\w*', post_newline_tok):
-                return rule.match(code, pos)
+            post_newline_tok = token.token[newline_pos+1:]
 
-    return match
+            if re.fullmatch(r'\s*', post_newline_tok):
+                self.first_in_line = True
+        elif self.first_in_line and re.fullmatch(r'\s*', token.token):
+            self.first_in_line = True
+        else:
+            self.first_in_line = False
 
-LexerContext = namedtuple('LexerContext', 'code, pos, line, prev_token')
+    def match(self, code, pos, line):
+        if self.first_in_line:
+            return self.rule.match(code, pos)
+
+LexerContext = namedtuple('LexerContext', 'code, pos, line')
 
 def simple_lexer(rules, code):
     if len(code) == 0:
@@ -83,20 +105,28 @@ def simple_lexer(rules, code):
         code += '\n'
 
     rules_compiled = []
+    after_match_hooks = []
 
     for rule, action in rules:
         if type(rule) is str:
             rules_compiled.append((match_regex(rule), action))
-        else:
+        elif callable(rule):
             rules_compiled.append((rule, action))
+        elif isinstance(rule, Matcher):
+            rules_compiled.append((rule.match, action))
+            after_match_hooks.append(rule.update_after_match)
+
+    def yield_token(to_yield):
+        for hook in after_match_hooks:
+            hook(code, pos, line, to_yield)
+        return to_yield
 
     pos = 0
     line = 1
-    prev_token = None
     while pos < len(code):
         rule_matched = False
         for rule, action in rules_compiled:
-            match = rule(code, pos, line, prev_token)
+            match = rule(code, pos, line)
 
             if match is not None:
                 span = match.span()
@@ -107,8 +137,7 @@ def simple_lexer(rules, code):
                 if isinstance(action, TokenType):
                     token = code[span[0]:span[1]]
                     token_obj = Token(action, token, span, line)
-                    prev_token = token_obj
-                    yield token_obj
+                    yield yield_token(token_obj)
                     line += token.count('\n')
                     pos = span[1]
                     break
@@ -116,12 +145,11 @@ def simple_lexer(rules, code):
                     last_token = None
                     for token in action(LexerContext(code, pos, line), match):
                         last_token = token
-                        yield token
+                        yield yield_token(token)
 
                     if last_token is not None:
                         pos = last_token.span[1]
                         line = last_token.line + last_token.token.count('\n')
-                        prev_token = last_token
 
                     break
                 else:
@@ -129,12 +157,10 @@ def simple_lexer(rules, code):
 
         if not rule_matched:
             token = Token(TokenType.ERROR, code[pos], (pos, pos+1), line)
-            yield token
-            prev_token = token
+            yield yield_token(token)
             if code[pos] == '\n':
                 line += 1
             pos += 1
-
 
 # Combines regexes passed as arguments with pipe operator
 def regex_or(*regexes):

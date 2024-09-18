@@ -5,7 +5,7 @@ from .utils import TokenType, Token, \
         simple_lexer, split_by_groups, \
         match_token, token_from_match, token_from_string, \
         regex_or, \
-        if_first_in_line
+        FirstInLine
 
 # Lexers used to extract possible references from source files
 # Design strongly inspired by Pygments lexers
@@ -33,13 +33,12 @@ class CLexer:
         (shared.common_string_and_char, TokenType.STRING),
         (shared.c_number, TokenType.NUMBER),
         (c_identifier, TokenType.IDENTIFIER),
-        (if_first_in_line(shared.c_preproc_ignore), TokenType.SPECIAL),
+        (FirstInLine(shared.c_preproc_ignore), TokenType.SPECIAL),
         (c_punctuation, TokenType.PUNCTUATION),
         (c_punctuation_extra, TokenType.PUNCTUATION),
     ]
 
-    def __init__(self, path, code):
-        self.path = path
+    def __init__(self, code):
         self.code = code
 
     def lex(self):
@@ -51,7 +50,6 @@ class DTSLexer:
 
     # NOTE: previous versions would split identifiers by commas (and other special characters),
     # this changes the old behavior
-    dts_single_char_identifier = r'[0-9a-zA-Z_]'
 
     # 6.2
     dts_label = r'[a-zA-Z_][a-zA-Z_0-9]{0,30}'
@@ -77,7 +75,7 @@ class DTSLexer:
 
     dts_punctuation = r'[#@:;{}\[\]()^<>=+*/%&\\|~!?,-]'
     # other, unknown, identifiers - for exmple macros
-    dts_default_identifier = r'[a-zA-Z_][0-9a-zA-Z_]*'
+    dts_default_identifier = r'[0-9a-zA-Z_]+'
 
     # Parse DTS node reference, ex: &{/path/to/node@20/test}
     @staticmethod
@@ -135,13 +133,11 @@ class DTSLexer:
          split_by_groups(TokenType.IDENTIFIER, TokenType.WHITESPACE, TokenType.PUNCTUATION)),
 
         (dts_default_identifier, TokenType.IDENTIFIER),
-        (shared.c_preproc_ignore, TokenType.SPECIAL),
+        (FirstInLine(shared.c_preproc_ignore), TokenType.SPECIAL),
         (dts_punctuation, TokenType.PUNCTUATION),
-        (dts_single_char_identifier, TokenType.IDENTIFIER),
     ]
 
-    def __init__(self, path, code):
-        self.path = path
+    def __init__(self, code):
         self.code = code
 
     def lex(self):
@@ -179,7 +175,7 @@ class KconfigLexer:
     @staticmethod
     def parse_kconfig_help_text(ctx, match):
         # assumes called with matched help keyword, return the keyword
-        token, ctx = token_from_match(ctx, match, TokenType.IDENTIFIER)
+        token, ctx = token_from_match(ctx, match, TokenType.SPECIAL)
         yield token
 
         # match whitespace after help
@@ -240,9 +236,9 @@ class KconfigLexer:
         (kconfig_number, TokenType.NUMBER),
         # for whatever reason u-boot kconfigs sometimes use ---help--- instead of help
         # /u-boot/v2024.07/source/arch/arm/mach-sunxi/Kconfig#L732
-        (r'-+help-+', parse_kconfig_help_text),
+        (FirstInLine('-+help-+'), parse_kconfig_help_text),
         (kconfig_punctuation, TokenType.PUNCTUATION),
-        (r'help', parse_kconfig_help_text),
+        (FirstInLine('help'), parse_kconfig_help_text),
         (kconfig_identifier, TokenType.IDENTIFIER),
         (kconfig_minor_identifier, TokenType.SPECIAL),
         # things that do not match are probably things from a macro call.
@@ -252,8 +248,7 @@ class KconfigLexer:
         (r'[^\n]+', TokenType.SPECIAL),
     ]
 
-    def __init__(self, path, code):
-        self.path = path
+    def __init__(self, code):
         self.code = code
 
     def lex(self):
@@ -338,7 +333,7 @@ class GasLexer:
         ('##', TokenType.PUNCTUATION),
         # don't interpret pipe as a comment
         ('||', TokenType.PUNCTUATION),
-        (if_first_in_line(gasm_preprocessor), TokenType.SPECIAL),
+        (FirstInLine(gasm_preprocessor), TokenType.SPECIAL),
         (shared.common_slash_comment, TokenType.COMMENT),
     ]
 
@@ -349,7 +344,7 @@ class GasLexer:
         (gasm_punctuation, TokenType.PUNCTUATION),
     ]
 
-    def __init__(self, path, code, arch='generic'):
+    def __init__(self, code, arch='generic'):
         self.code = code
         self.comment_chars = self.gasm_comment_chars_map[arch]
 
@@ -359,7 +354,7 @@ class GasLexer:
         for comment_char in self.comment_chars:
             if comment_char[0] == '^':
                 result.append((
-                    if_first_in_line(comment_char[1] + shared.singleline_comment_with_escapes_base),
+                    FirstInLine(comment_char[1] + shared.singleline_comment_with_escapes_base),
                     TokenType.COMMENT
                 ))
             else:
@@ -375,7 +370,6 @@ class GasLexer:
                 self.get_arch_rules() + \
                 self.rules_after_comments
 
-        print(rules)
         return simple_lexer(rules, self.code)
 
 
@@ -403,8 +397,7 @@ class MakefileLexer:
         (make_punctuation, TokenType.PUNCTUATION),
     ]
 
-    def __init__(self, path, code):
-        self.path = path
+    def __init__(self, code):
         self.code = code
 
     def lex(self):
@@ -422,8 +415,7 @@ class DefaultLexer:
         (r'.', TokenType.PUNCTUATION),
     ]
 
-    def __init__(self, path, code):
-        self.path = path
+    def __init__(self, code):
         self.code = code
 
     def lex(self):
