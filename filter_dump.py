@@ -1,10 +1,10 @@
 import re
 import sys
-from elixir.lexers import dts_identifier
+from elixir.lexers.lexers import DTSLexer
 
 def file_allowed_hash_comments(filename, file_line, keyword):
     if filename.lower().endswith(('.s', 'makefile', 'kconfig')) or filename.lower().startswith(('makefile', 'kconfig')):
-        return not (re.match(r'\s*#\s*', file_line) and not re.match(r'\s*#\s*(define|undef|if|ifdef|ifndef|elif|elifdef|elifndef)', file_line))
+        return not (re.match(r'\s*(#|!|\||;|@|\*)\s*', file_line) and not re.match(r'\s*#\s*(define|undef|if|ifdef|ifndef|elif|elifdef|elifndef)', file_line))
 
     return True
 
@@ -45,12 +45,12 @@ def file_allowed_strings(filename, file_line, keyword):
 
     #if len(dstring) + len(sstring) != 0:
     #    print("debug", keyword, k_count, count, dstring, sstring)
-    return k_count == count
+    return k_count != count
 
 def file_allowed_dts_id_commas(filename, file_line, keyword):
     if filename.lower().endswith(('dts', 'dtsi')):
         ident = file_line.strip().split(' ')[0]
-        return not (re.match(dts_identifier, ident) and ',' in ident)
+        return not (re.match(DTSLexer.dts_property_name, ident) and ',' in ident)
     else:
         return True
 
@@ -83,7 +83,7 @@ if __name__ == "__main__":
             if len(line) == 0:
                 print()
                 continue
-            elif re.match(r'^[0-9a-f,-]+\s*$', line):
+            elif re.fullmatch(r'^[0-9a-f,-]+\s*$', line):
                 continue
 
             prefix = ''
@@ -100,7 +100,11 @@ if __name__ == "__main__":
             line_number = line_split[2]
             line_contents = " ".join(line_split[3:])
 
-            if not filename.lower().endswith(('.c','.h')):
+            #if not filename.lower().endswith(('.c','.h')):
+            #    continue
+            #if not filename.lower().endswith(('.dts','.dtsi')):
+            #    continue
+            if not filename.lower().endswith(('.s')):
                 continue
 
             if file_allowed(filename, line_contents, keyword):

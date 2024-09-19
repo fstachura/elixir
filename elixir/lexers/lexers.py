@@ -52,13 +52,15 @@ class DTSLexer:
     # this changes the old behavior
 
     # 6.2
-    dts_label = r'[a-zA-Z_][a-zA-Z_0-9]{0,30}'
+    # technically shall be 1-31 characters long BUT /linux/v6.9.4/source/arch/arm64/boot/dts/qcom/sm8250.dtsi#L3506
+    dts_label = r'[a-zA-Z_][a-zA-Z_0-9]*'
     # no whitespace between label and ampersand/colon is allowed
     dts_label_reference = f'(&)({ dts_label })'
     dts_label_definition = f'({ dts_label })(:)'
 
     # 2.2.1
-    dts_node_name = r'[a-zA-Z0-9,._+-]{1,31}'
+    # same with label lenght, just in case
+    dts_node_name = r'[a-zA-Z0-9,._+-]+'
     # can contain macro symbols
     dts_unit_address = r'[a-zA-Z0-9,._+-]*'
 
@@ -66,7 +68,7 @@ class DTSLexer:
     dts_node_name_without_unit_address = f'({ dts_node_name })' + r'(\s*)({)'
 
     # 2.2.4
-    dts_property_name = r'[0-9a-zA-Z,._+?#-]{1,31}'
+    dts_property_name = r'[0-9a-zA-Z,._+?#-]+'
     dts_property_assignment = f'({ dts_property_name })' + r'(\s*)(=)'
     dts_property_empty = f'({ dts_property_name })' + r'(\s*)(;)'
 
@@ -296,7 +298,7 @@ class GasLexer:
         'mips': ('#',),
         'alpha': ('#',),
         'csky': ('#',),
-        
+
 
         # https://sourceware.org/binutils/docs/as.html#HPPA-Syntax
         # /linux/v6.10.7/source/arch/parisc/kernel/perf_asm.S#L28

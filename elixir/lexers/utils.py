@@ -3,8 +3,6 @@ import enum
 import sys
 from collections import namedtuple
 
-from elixir.lexers import shared
-
 # Supported token types
 class TokenType(enum.Enum):
     WHITESPACE = 'whitespace',

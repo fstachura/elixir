@@ -21,7 +21,7 @@
 from .lib import script, scriptLines, decode
 from . import lib
 from . import data
-from .lexers import get_lexer, TokenType
+from .lexers import TokenType
 import os, sys
 from collections import OrderedDict
 from urllib import parse
@@ -172,10 +172,10 @@ class Query:
 
             version = args[0]
             path = args[1]
+            lexer = args[2]
 
             filename = os.path.basename(path)
             family = lib.getFileFamily(filename)
-            lexer = get_lexer(path)
 
             if family is not None and lexer is not None:
                 buffer = BytesIO()
