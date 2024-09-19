@@ -1063,6 +1063,7 @@ main {
 .sidebar nav {
   width: 60%;
   max-width: 330px;
+  overflow: scroll;
 }
 
 /* tablet and above */
