@@ -4,7 +4,7 @@ from . import shared
 from .utils import TokenType, Token, \
         simple_lexer, split_by_groups, \
         match_token, token_from_match, token_from_string, \
-        regex_or, \
+        regex_or, regex_concat, \
         FirstInLine
 
 # Lexers used to extract possible references from source files
@@ -72,6 +72,10 @@ class DTSLexer:
     dts_property_assignment = f'({ dts_property_name })' + r'(\s*)(=)'
     dts_property_empty = f'({ dts_property_name })' + r'(\s*)(;)'
 
+    dts_directive = r'/[a-zA-Z0-9-]+/';
+    dts_delete_node = regex_concat(r'/delete-node/\s+', dts_node_name)
+    dts_delete_property = regex_concat(r'/delete-property/\s+', dts_property_name)
+
     # 6.3
     dts_node_reference = r'(&)({)([a-zA-Z0-9,._+/@-]+?)(})'
 
@@ -134,6 +138,9 @@ class DTSLexer:
         (dts_node_name_without_unit_address, 
          split_by_groups(TokenType.IDENTIFIER, TokenType.WHITESPACE, TokenType.PUNCTUATION)),
 
+        (dts_directive, TokenType.SPECIAL),
+        (dts_delete_node, split_by_groups(TokenType.SPECIAL, TokenType.IDENTIFIER)),
+        (dts_delete_property, split_by_groups(TokenType.SPECIAL, TokenType.IDENTIFIER)),
         (dts_default_identifier, TokenType.IDENTIFIER),
         (FirstInLine(shared.c_preproc_ignore), TokenType.SPECIAL),
         (dts_punctuation, TokenType.PUNCTUATION),
