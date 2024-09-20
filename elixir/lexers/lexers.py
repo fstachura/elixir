@@ -298,7 +298,9 @@ class GasLexer:
         'mips': ('#',),
         'alpha': ('#',),
         'csky': ('#',),
-
+        # BUT double pipe in macros is an operator... and # not in the first line in 
+        # m68k/ifpsp060/src/fplsp.S
+        'm68k': ('|', '#'), 
 
         # https://sourceware.org/binutils/docs/as.html#HPPA-Syntax
         # /linux/v6.10.7/source/arch/parisc/kernel/perf_asm.S#L28
@@ -314,10 +316,7 @@ class GasLexer:
         # https://sourceware.org/binutils/docs/as.html#Sparc_002dSyntax
         # /linux/v6.10.7/source/arch/sparc/lib/memset.S#L125
         'sparc': ('!', '^#'),
-        # BUT double pipe in macros is an operator... and # not in the first line in 
-        # m68k/ifpsp060/src/fplsp.S
-        'm68k': ('|', '^#'), 
-        'arc': ('#',';' '^#'),
+        'arc': ('#', ';', '^#'),
         # used in ARM https://sourceware.org/binutils/docs/as.html#ARM-Syntax
         # /linux/v6.10.7/source/arch/arm/mach-sa1100/sleep.S#L33
         'arm32': ('@', '^#'),
