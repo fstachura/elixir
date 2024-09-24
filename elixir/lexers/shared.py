@@ -23,6 +23,7 @@ c_preproc_warning_and_error = r'#\s*(warning|error)\s(\\\s*\n|[^\n])*\n'
 c_preproc_other = r'#\s*[a-z]+'
 c_preproc_ignore = regex_or(c_preproc_angled_include, c_preproc_warning_and_error, c_preproc_other)
 
+# \, any amount of whitespace, newline or any character that's not backslash newline or a quote, any escaped character
 double_quote_string_with_escapes = r'"(\\\s*\n|[^\\"\n]|\\(.|\s))*?"'
 single_quote_string_with_escapes = r"'(\\\s*\n|[^\\'\n]|\\(.|\s))*?'"
 

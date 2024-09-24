@@ -22,7 +22,7 @@ var AutoComplete = require('autocomplete-js');
 AutoComplete({
     Url: "/acp",
     Limit: 10,
-    MinChars: 4,
+    MinChars: 1,
     Delay: 500,
 }, "#search-input");
 

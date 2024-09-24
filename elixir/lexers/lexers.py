@@ -162,14 +162,13 @@ class KconfigLexer:
     hash_comment = r'#' + shared.singleline_comment_with_escapes_base
 
     # NOTE pretty much all kconfig identifiers either start uppercase or with a number. this saves us from parsing macro calls
-    kconfig_identifier = r'[A-Z0-9_][A-Z0-9a-z_a-]*'
+    kconfig_identifier_starts_with_letters = r'[A-Z_][A-Z0-9a-z_-]*'
+    kconfig_identifier_starts_with_digits = r'[0-9]+[A-Z_a-z-][A-Z0-9a-z_-]*'
+    kconfig_identifier = regex_or(kconfig_identifier_starts_with_letters, kconfig_identifier_starts_with_digits)
     # other perhaps interesting identifiers
     kconfig_minor_identifier = r'[a-zA-Z0-9_/][a-zA-Z0-9_/.-]*'
     kconfig_punctuation = r'[|&!=$()/_.+<>,-]'
-    kconfig_double_quote_string = r'"[^\n]*?"'
-    kconfig_single_quote_string = r"'[^\n]*?'"
-    kconfig_string = regex_or(kconfig_double_quote_string, kconfig_single_quote_string)
-    kconfig_number = f'[0-9]+'
+    kconfig_number = f'[0-9]+' # TODO does not handle hex numbers
 
     # NOTE no identifiers are parsed out of KConfig help texts now, this changes the
     # old behavior
@@ -241,14 +240,14 @@ class KconfigLexer:
     rules = [
         (shared.whitespace, TokenType.WHITESPACE),
         (hash_comment, TokenType.COMMENT),
-        (kconfig_string, TokenType.STRING),
-        (kconfig_number, TokenType.NUMBER),
+        (shared.common_string_and_char, TokenType.STRING),
         # for whatever reason u-boot kconfigs sometimes use ---help--- instead of help
         # /u-boot/v2024.07/source/arch/arm/mach-sunxi/Kconfig#L732
         (FirstInLine('-+help-+'), parse_kconfig_help_text),
         (kconfig_punctuation, TokenType.PUNCTUATION),
         (FirstInLine('help'), parse_kconfig_help_text),
         (kconfig_identifier, TokenType.IDENTIFIER),
+        (kconfig_number, TokenType.NUMBER),
         (kconfig_minor_identifier, TokenType.SPECIAL),
         # things that do not match are probably things from a macro call.
         # unless the syntax changed, or the help parser got confused.
@@ -277,21 +276,6 @@ class GasLexer:
 
     gasm_char = r"'(\\.|.|\n)"
     gasm_string = f'(({ shared.double_quote_string_with_escapes })|({ gasm_char }))'
-
-    # TODO allow for this somehow (maybe #digits and #SCREAM_CASE only, without spaces? and #(SCREAM_CASE))
-    # u-boot/v2024.07/source/arch/arm/cpu/armv7/psci.S#L147
-
-    # single space is required after characters in rare comments - people *usually* place
-    # a space after a comment character. each architecture in gasm has different syntax,
-    # some have different syntax for comments. sometimes syntax for comments in one arch
-    # collides with syntax for something else in another arch (and i'm only talking about
-    # architectures that are supported in linux - i didn't research the niche ones).
-    # SH and SPARC use ! for comments, but ! is sometimes used for something else in arm64.
-    # same with @. ; is often used to separate statements...
-    # this (matching space after comment character) is works 99% of the time. but not 100%.
-    # for 100% i believe the lexer will need hints about the context, and the only way to
-    # provide these hints i see is to provide a map of directories that belong to problematic
-    # architectures.
 
     gasm_comment_chars_map = {
         'generic': ('#',),
