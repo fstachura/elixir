@@ -8,7 +8,8 @@ class LexerTest(unittest.TestCase):
     def verify_positions(self, code, tokens):
         last_token = None
         for t in tokens:
-            self.assertEqual(code[t.span[0]:t.span[1]], t.token)
+            if code[t.span[0]:t.span[1]] != t.token:
+                self.fail(f"token {t} span != code span {code[t.span[0]:t.span[1]].encode()}")
 
             if last_token is not None and last_token.span[1] != t.span[0]:
                 self.fail(f"token does not start where the previous token ends. prev: {last_token}, next: {t}")
@@ -332,7 +333,7 @@ class DTSLexerTests(LexerTest):
     ], self.default_filtered_tokens)
 
 
-class KconfigLexer(LexerTest):
+class KconfigLexerTest(LexerTest):
     lexer_cls = KconfigLexer
     default_filtered_tokens = ("SPECIAL", "COMMENT", "STRING", "IDENTIFIER", "SPECIAL", "ERROR")
 
@@ -352,7 +353,8 @@ config 64BIT # comment2
 
         # comment 5
 
-    # comment 6""", [
+    # comment 6
+""", [
             ['COMMENT', '# comment1\n'],
             ['SPECIAL', 'config'],
             ['IDENTIFIER', '64BIT'],
@@ -380,7 +382,7 @@ choice
     prompt "test prompt"
     default y
 
-conifg 86CONIFG
+config 86CONIFG
     bool "text"
     prompt "prompt"
     default y
@@ -395,7 +397,8 @@ conifg 86CONIFG
 
         more help text
 
-endmenu""", [
+endmenu
+""", [
         ['SPECIAL', 'menu'],
         ['STRING', '"menu name"'],
         ['SPECIAL', 'visible'],
@@ -406,7 +409,7 @@ endmenu""", [
         ['STRING', '"test prompt"'],
         ['SPECIAL', 'default'],
         ['SPECIAL', 'y'],
-        ['SPECIAL', 'conifg'],
+        ['SPECIAL', 'config'],
         ['IDENTIFIER', '86CONIFG'],
         ['SPECIAL', 'bool'],
         ['STRING', '"text"'],
@@ -441,12 +444,7 @@ config TEST
     select TEST7 if TEST8 < TEST9
     select TEST10 if TEST11 > TEST12
     select TEST13 if TEST14 <=  TEST15
-    select TEST16    if TEST17   >= TEST3
-    select TEST17 if (TEST18 = TEST19)
-
-    select TEST20 if !(TEST21 = TEST22)
-    select TEST23 if TEST24 && TEST25
-    select TEST26 if TEST27 || TEST28""", [
+""", [
         ['SPECIAL', 'config'],
         ['IDENTIFIER', 'TEST'],
         ['SPECIAL', 'select'],
@@ -481,6 +479,20 @@ config TEST
         ['PUNCTUATION', '<'],
         ['PUNCTUATION', '='],
         ['IDENTIFIER', 'TEST15'],
+    ], self.default_filtered_tokens + ("PUNCTUATION",))
+
+    def test_conditions2(self):
+        self.lex(r"""
+config TEST
+    select TEST16    if TEST17   >= TEST3
+    select TEST17 if (TEST18 = TEST19)
+
+    select TEST20 if !(TEST21 = TEST22)
+    select TEST23 if TEST24 && TEST25
+    select TEST26 if TEST27 || TEST28
+""", [
+        ['SPECIAL', 'config'],
+        ['IDENTIFIER', 'TEST'],
         ['SPECIAL', 'select'],
         ['IDENTIFIER', 'TEST16'],
         ['SPECIAL', 'if'],
@@ -523,15 +535,12 @@ config TEST
 
     def test_macros(self):
         self.lex(r"""
-conifg TEST
+config TEST
     depends on $(shell,cat file | grep -vi "option 2")
     depends on $(info,info to print)
     depends on $(warning-if,a != b,warning to print)
-    depends on $(error-if,a != b,warning to print)
-    depends on $(filename)
-    depends on $(lineno)
 """, [
-        ['SPECIAL', 'conifg'],
+        ['SPECIAL', 'config'],
         ['IDENTIFIER', 'TEST'],
         ['SPECIAL', 'depends'],
         ['SPECIAL', 'on'],
@@ -572,6 +581,17 @@ conifg TEST
         ['SPECIAL', 'to'],
         ['SPECIAL', 'print'],
         ['PUNCTUATION', ')'],
+    ], self.default_filtered_tokens + ("PUNCTUATION",))
+
+def test_macros2(self):
+    self.lex(r"""
+config TEST
+    depends on $(error-if,a != b,warning to print)
+    depends on $(filename)
+    depends on $(lineno)
+""", [
+        ['SPECIAL', 'config'],
+        ['IDENTIFIER', 'TEST'],
         ['SPECIAL', 'depends'],
         ['SPECIAL', 'on'],
         ['PUNCTUATION', '$'],
@@ -808,16 +828,6 @@ L"test string";
 "test" "string";
 "test""string";
 "test"
-    "string";
-        char* s1 = "asdjlsajdlksad""asdsajdlsad";       //comment6
-    char* s2 = "asdjlsajdlksad"  "asdsajdlsad";         // \
-                                                        single line comment \
-        with escapes
-    char* s3 = " asdsaldjkas \"";
-    char* s4 = " asdsaldjkas \" zxclzxclk \" asljda";
-    char* s5 = " asdsaldjkas \' zxclzxclk \" asljda";
-    char* s6 = " asdsaldjkas \"\"\" zxclzxclk \'\'\' ; asljda";
-    char* s7 = u8"test";
 """, [
         ['STRING', '"asdsad \\   \n    asdasd"'],
         ['STRING', "'asdsad \\\n    asdasd'"],
@@ -839,6 +849,21 @@ L"test string";
         ['STRING', '"test"'],
         ['STRING', '"string"'],
         ['STRING', '"test"'],
+    ])
+
+    def test_strings2(self):
+        self.lex(r"""
+    "string";
+        char* s1 = "asdjlsajdlksad""asdsajdlsad";       //comment6
+    char* s2 = "asdjlsajdlksad"  "asdsajdlsad";         // \
+                                                        single line comment \
+        with escapes
+    char* s3 = " asdsaldjkas \"";
+    char* s4 = " asdsaldjkas \" zxclzxclk \" asljda";
+    char* s5 = " asdsaldjkas \' zxclzxclk \" asljda";
+    char* s6 = " asdsaldjkas \"\"\" zxclzxclk \'\'\' ; asljda";
+    char* s7 = u8"test";
+""", [
         ['STRING', '"string"'],
         ['IDENTIFIER', 'char'],
         ['IDENTIFIER', 's1'],
@@ -1073,6 +1098,162 @@ char statement;
         ['COMMENT', '// \\\n                                   single line comment \\\n        with escapes\n'],
         ['IDENTIFIER', 'char'],
         ['IDENTIFIER', 'statement'],
+    ])
+
+    # https://en.cppreference.com/w/cpp/language/pack_indexing
+    def test_cpp_templates(self):
+        self.lex(r"""
+template<typename... Ts>
+constexpr auto f(Ts&&... ts) {
+    return sizeof...(Ts);
+}
+
+template<typename T, T::t t = 0>
+int f() {
+    std::cout << t << std::endl;
+    ns1::ns2::type v;
+    ns1::ns2::type2<int> v2;
+    ns1::ns2::type3<int, double> v3;
+}
+""", [
+        ['IDENTIFIER', 'template'],
+        ['IDENTIFIER', 'typename'],
+        ['IDENTIFIER', 'Ts'],
+        ['IDENTIFIER', 'constexpr'],
+        ['IDENTIFIER', 'auto'],
+        ['IDENTIFIER', 'f'],
+        ['IDENTIFIER', 'Ts'],
+        ['IDENTIFIER', 'ts'],
+        ['IDENTIFIER', 'return'],
+        ['IDENTIFIER', 'sizeof'],
+        ['IDENTIFIER', 'Ts'],
+        ['IDENTIFIER', 'template'],
+        ['IDENTIFIER', 'typename'],
+        ['IDENTIFIER', 'T'],
+        ['IDENTIFIER', 'T'],
+        ['IDENTIFIER', 't'],
+        ['IDENTIFIER', 't'],
+        ['IDENTIFIER', 'int'],
+        ['IDENTIFIER', 'f'],
+        ['IDENTIFIER', 'std'],
+        ['IDENTIFIER', 'cout'],
+        ['IDENTIFIER', 't'],
+        ['IDENTIFIER', 'std'],
+        ['IDENTIFIER', 'endl'],
+        ['IDENTIFIER', 'ns1'],
+        ['IDENTIFIER', 'ns2'],
+        ['IDENTIFIER', 'type'],
+        ['IDENTIFIER', 'v'],
+        ['IDENTIFIER', 'ns1'],
+        ['IDENTIFIER', 'ns2'],
+        ['IDENTIFIER', 'type2'],
+        ['IDENTIFIER', 'int'],
+        ['IDENTIFIER', 'v2'],
+        ['IDENTIFIER', 'ns1'],
+        ['IDENTIFIER', 'ns2'],
+        ['IDENTIFIER', 'type3'],
+        ['IDENTIFIER', 'int'],
+        ['IDENTIFIER', 'double'],
+        ['IDENTIFIER', 'v3'],
+    ])
+
+    # https://en.cppreference.com/w/cpp/language/requires
+    def test_cpp_concepts(self):
+        self.lex(r"""
+template<typename T>
+concept C = requires(T x) {
+    {x.count()} -> std::same_as<int>;
+    requires Same<T*, decltype(&x)>
+};
+""", [
+        ['IDENTIFIER', 'template'],
+        ['IDENTIFIER', 'typename'],
+        ['IDENTIFIER', 'T'],
+        ['IDENTIFIER', 'concept'],
+        ['IDENTIFIER', 'C'],
+        ['IDENTIFIER', 'requires'],
+        ['IDENTIFIER', 'T'],
+        ['IDENTIFIER', 'x'],
+        ['IDENTIFIER', 'x'],
+        ['IDENTIFIER', 'count'],
+        ['IDENTIFIER', 'std'],
+        ['IDENTIFIER', 'same_as'],
+        ['IDENTIFIER', 'int'],
+        ['IDENTIFIER', 'requires'],
+        ['IDENTIFIER', 'Same'],
+        ['IDENTIFIER', 'T'],
+        ['IDENTIFIER', 'decltype'],
+        ['IDENTIFIER', 'x'],
+    ])
+
+    def test_cpp_class(self):
+        self.lex(r"""
+using namespace std;
+
+auto f() -> std::string;
+
+class test {
+public:
+    int operator ""_tx(int);
+    int a = 123_tx;
+};
+""", [
+        ['IDENTIFIER', 'using'],
+        ['IDENTIFIER', 'namespace'],
+        ['IDENTIFIER', 'std'],
+        ['IDENTIFIER', 'auto'],
+        ['IDENTIFIER', 'f'],
+        ['IDENTIFIER', 'std'],
+        ['IDENTIFIER', 'string'],
+        ['IDENTIFIER', 'class'],
+        ['IDENTIFIER', 'test'],
+        ['IDENTIFIER', 'public'],
+        ['IDENTIFIER', 'int'],
+        ['IDENTIFIER', 'operator'],
+        ['STRING', '""'],
+        ['IDENTIFIER', '_tx'],
+        ['IDENTIFIER', 'int'],
+        ['IDENTIFIER', 'int'],
+        ['IDENTIFIER', 'a'],
+        ['IDENTIFIER', '_tx'],
+    ])
+
+    def test_cpp_attrs(self):
+        self.lex(r"""
+[[using test: atr1]] [[atr2]]
+int f[[atr3]]();
+""", [
+        ['IDENTIFIER', 'using'],
+        ['IDENTIFIER', 'test'],
+        ['IDENTIFIER', 'atr1'],
+        ['IDENTIFIER', 'atr2'],
+        ['IDENTIFIER', 'int'],
+        ['IDENTIFIER', 'f'],
+        ['IDENTIFIER', 'atr3'],
+    ])
+
+    # https://en.cppreference.com/w/cpp/language/noexcept_spec
+    def test_cpp_noexpect(self):
+        self.lex(r"""
+void f() noexpect(true) {}
+""", [
+        ['IDENTIFIER', 'void'],
+        ['IDENTIFIER', 'f'],
+        ['IDENTIFIER', 'noexpect'],
+        ['IDENTIFIER', 'true'],
+    ])
+
+    # https://en.cppreference.com/w/cpp/language/coroutines
+    def test_cpp_coroutines(self):
+        self.lex(r"""
+task<> test() {
+    co_await test2();
+}
+""", [
+        ['IDENTIFIER', 'task'],
+        ['IDENTIFIER', 'test'],
+        ['IDENTIFIER', 'co_await'],
+        ['IDENTIFIER', 'test2'],
     ])
 
 class GasLexerTest(unittest.TestCase):

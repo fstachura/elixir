@@ -41,7 +41,7 @@ c_hexidecimal = f'{ common_hexidecimal_integer }({ c_hexidecimal_double_part })?
 c_octal = f'{ common_octal_integer }({ c_octal_double_part  })?'
 
 # not entirely correct... accepts way more than the standard allows
-c_number_suffix = r'([uU]|[lL]|(wb|WB)|[fF]){0,5}'
+c_number_suffix = r'([uU]|[lL]|(wb|WB)|[fF]|[zZ]){0,5}'
 
 c_number = regex_concat(regex_or(c_hexidecimal, common_binary_integer, c_decimal, c_octal), c_number_suffix)
 
