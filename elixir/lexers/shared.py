@@ -29,8 +29,8 @@ single_quote_string_with_escapes = r"'(\\\s*\n|[^\\'\n]|\\(.|\s))*?'"
 
 common_string_and_char = regex_or(double_quote_string_with_escapes, single_quote_string_with_escapes)
 
-c_exponent = r'(e[+-]?[0-9][0-9\']*)'
-c_hexidecimal_exponent = r'(p[+-]?[0-9][0-9\']*)'
+c_exponent = r'([eE][+-]?[0-9][0-9\']*)'
+c_hexidecimal_exponent = r'([pP][+-]?[0-9][0-9\']*)'
 
 c_decimal_double_part = r'\.[0-9\']*' + c_exponent + '?'
 c_octal_double_part = r'\.[0-7\']*' + c_exponent + '?'

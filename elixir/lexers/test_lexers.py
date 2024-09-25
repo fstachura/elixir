@@ -4,16 +4,64 @@ from .lexers import DTSLexer, KconfigLexer, CLexer, GasLexer
 class LexerTest(unittest.TestCase):
     default_filtered_tokens = ("SPECIAL", "COMMENT", "STRING", "IDENTIFIER", "SPECIAL", "ERROR")
 
+    # Checks if each token starts in the claimed position of code, if tokens cover all code and if no tokens overlap
+    def verify_positions(self, code, tokens):
+        last_token = None
+        for t in tokens:
+            self.assertEqual(code[t.span[0]:t.span[1]], t.token)
+
+            if last_token is not None and last_token.span[1] != t.span[0]:
+                self.fail(f"token does not start where the previous token ends. prev: {last_token}, next: {t}")
+            elif last_token is None and t.span[0] != 0:
+                self.fail(f"first token does not start at zero: {t}")
+
+            last_token = t
+
+        if last_token.span[1] != len(code):
+            self.fail(f"code is longer than position of the last token: {t}, code len: {len(code)}")
+
+    # Checks if each token is in the claimed line of code
+    def verify_lines(self, code, tokens):
+        lines = [""] + code.split("\n") # zero line is emtpy
+        last_line_number = None
+        last_line_contents_left = None
+        for t in tokens:
+            if last_line_number != t.line:
+                last_line_number = t.line
+                last_line_contents_left = lines[t.line]
+
+            if last_line_contents_left is None:
+                self.fail(f"nothing left in line {t.line} for {t.token} {t}")
+
+            newline_count = t.token.count("\n")
+            all_token_lines = last_line_contents_left + "\n" + \
+                    "\n".join([lines[i] for i in range(t.line+1, t.line+newline_count+1)]) + "\n"
+            token_pos_in_lines = all_token_lines.find(t.token)
+            if token_pos_in_lines == -1:
+                self.fail(f"token {t.token} not found in line {t.line}: {all_token_lines.encode()}")
+            if token_pos_in_lines < len(last_line_contents_left):
+                last_line_contents_left = last_line_contents_left[token_pos_in_lines:]
+            else:
+                last_line_contents_left = None
+
+    # Lex code, do basic soundness checks on tokens (lines and positions) and compare lexing results with a list of tokens
     def lex(self, code, expected, filtered_tokens=None):
         if filtered_tokens is None:
             filtered_tokens = self.default_filtered_tokens
 
         code = code.lstrip()
-        tokens = [[type.name, token, span, line] for type, token, span, line in self.lexer_cls(code).lex()]
+        tokens = list(self.lexer_cls(code).lex())
+        self.verify_positions(code, tokens)
+        self.verify_lines(code, tokens)
+
+        tokens = [[type.name, token] for type, token, span, line in tokens]
         tokens = [t for t in tokens if t[0] in filtered_tokens]
-        print()
-        for t in tokens: print(t, end=",\n")
-        self.assertEqual(tokens, expected)
+        try:
+            self.assertEqual(tokens, expected)
+        except Exception as e:
+            print()
+            for t in tokens: print(t, end=",\n")
+            raise e
 
 class DTSLexerTests(LexerTest):
     lexer_cls = DTSLexer
@@ -34,19 +82,19 @@ class DTSLexerTests(LexerTest):
 };
 #endif
 """, [
-        ['SPECIAL', '#include <file.dtsi>', (0, 20), 1],
-        ['SPECIAL', '#include "file2.dtsi"', (21, 42), 2],
-        ['SPECIAL', '#error error message asldjlksajdlksad\n', (43, 81), 3],
-        ['SPECIAL', '#warning   warning message alsjdlkasjdlksajd\n', (81, 126), 4],
-        ['SPECIAL', '#define', (126, 133), 5],
-        ['IDENTIFIER', 'MACRO', (134, 139), 5],
-        ['IDENTIFIER', 'arg', (140, 143), 5],
-        ['IDENTIFIER', 'arg', (153, 156), 5],
-        ['SPECIAL', '#if', (164, 167), 6],
-        ['IDENTIFIER', 'property', (178, 186), 8],
-        ['IDENTIFIER', 'MACRO', (198, 203), 9],
-        ['IDENTIFIER', 'test', (204, 208), 9],
-        ['SPECIAL', '#endif', (213, 219), 11],
+        ['SPECIAL', '#include <file.dtsi>'],
+        ['SPECIAL', '#include "file2.dtsi"'],
+        ['SPECIAL', '#error error message asldjlksajdlksad\n'],
+        ['SPECIAL', '#warning   warning message alsjdlkasjdlksajd\n'],
+        ['SPECIAL', '#define'],
+        ['IDENTIFIER', 'MACRO'],
+        ['IDENTIFIER', 'arg'],
+        ['IDENTIFIER', 'arg'],
+        ['SPECIAL', '#if'],
+        ['IDENTIFIER', 'property'],
+        ['IDENTIFIER', 'MACRO'],
+        ['IDENTIFIER', 'test'],
+        ['SPECIAL', '#endif'],
     ])
 
     def test_dts_directives(self):
@@ -64,20 +112,20 @@ class DTSLexerTests(LexerTest):
     /delete-property/ test-prop;
 };
 """, [
-        ['SPECIAL', '/include/', (0, 9), 1],
-        ['STRING', '"file.dtsi"', (10, 21), 1],
-        ['SPECIAL', '/dts-v1/', (22, 30), 2],
-        ['SPECIAL', '/memreserve/', (32, 44), 3],
-        ['IDENTIFIER', 'test_label', (64, 74), 5],
-        ['IDENTIFIER', 'test-node', (76, 85), 5],
-        ['IDENTIFIER', 'test-prop2', (96, 106), 6],
-        ['IDENTIFIER', 'test-prop', (125, 134), 8],
-        ['SPECIAL', '/delete-node/', (146, 159), 9],
-        ['IDENTIFIER', 'test-node', (160, 169), 9],
-        ['SPECIAL', '/delete-node/', (175, 188), 10],
-        ['IDENTIFIER', 'test_label', (190, 200), 10],
-        ['SPECIAL', '/delete-property/', (206, 223), 11],
-        ['IDENTIFIER', 'test-prop', (224, 233), 11],
+        ['SPECIAL', '/include/'],
+        ['STRING', '"file.dtsi"'],
+        ['SPECIAL', '/dts-v1/'],
+        ['SPECIAL', '/memreserve/'],
+        ['IDENTIFIER', 'test_label'],
+        ['IDENTIFIER', 'test-node'],
+        ['IDENTIFIER', 'test-prop2'],
+        ['IDENTIFIER', 'test-prop'],
+        ['SPECIAL', '/delete-node/'],
+        ['IDENTIFIER', 'test-node'],
+        ['SPECIAL', '/delete-node/'],
+        ['IDENTIFIER', 'test_label'],
+        ['SPECIAL', '/delete-property/'],
+        ['IDENTIFIER', 'test-prop'],
     ])
 
     def test_dts_unusual_identifiers(self):
@@ -93,17 +141,17 @@ class DTSLexerTests(LexerTest):
     };
 };
 """, [
-        ['IDENTIFIER', '_test_label', (8, 19), 2],
-        ['IDENTIFIER', 'id,test._+asd-2', (29, 44), 2],
-        ['IDENTIFIER', 'property,name', (65, 78), 3],
-        ['IDENTIFIER', 'p,r.o_p+e?r#t-y,name', (95, 115), 4],
-        ['IDENTIFIER', 'way_too_long_label_123219380921830218309218309213', (135, 184), 5],
-        ['IDENTIFIER', 'node', (191, 195), 5],
-        ['IDENTIFIER', '234', (196, 199), 5],
-        ['IDENTIFIER', 'compatible', (214, 224), 6],
-        ['STRING', '"asd,zxc"', (227, 236), 6],
-        ['IDENTIFIER', 'test', (256, 260), 8],
-        ['IDENTIFIER', 'way_too_long_label_123219380921830218309218309213', (268, 317), 8],
+        ['IDENTIFIER', '_test_label'],
+        ['IDENTIFIER', 'id,test._+asd-2'],
+        ['IDENTIFIER', 'property,name'],
+        ['IDENTIFIER', 'p,r.o_p+e?r#t-y,name'],
+        ['IDENTIFIER', 'way_too_long_label_123219380921830218309218309213'],
+        ['IDENTIFIER', 'node'],
+        ['IDENTIFIER', '234'],
+        ['IDENTIFIER', 'compatible'],
+        ['STRING', '"asd,zxc"'],
+        ['IDENTIFIER', 'test'],
+        ['IDENTIFIER', 'way_too_long_label_123219380921830218309218309213'],
     ])
 
     def test_non_numeric_unit_address(self):
@@ -115,12 +163,12 @@ class DTSLexerTests(LexerTest):
     };
 };
 """, [
-        ['IDENTIFIER', 'test', (8, 12), 2],
-        ['IDENTIFIER', 'node', (14, 18), 2],
-        ['IDENTIFIER', 'test_address', (19, 31), 2],
-        ['IDENTIFIER', 'test2', (45, 50), 4],
-        ['IDENTIFIER', 'node', (52, 56), 4],
-        ['IDENTIFIER', 'MACRO_ADDRESS', (57, 70), 4],
+        ['IDENTIFIER', 'test'],
+        ['IDENTIFIER', 'node'],
+        ['IDENTIFIER', 'test_address'],
+        ['IDENTIFIER', 'test2'],
+        ['IDENTIFIER', 'node'],
+        ['IDENTIFIER', 'MACRO_ADDRESS'],
     ])
 
     def test_values_with_labels(self):
@@ -131,40 +179,40 @@ class DTSLexerTests(LexerTest):
     prop3 = label4: "val" label5: ;
 };
 """, [
-        ['PUNCTUATION', '/', (0, 1), 1],
-        ['PUNCTUATION', '{', (2, 3), 1],
-        ['IDENTIFIER', 'prop1', (8, 13), 2],
-        ['PUNCTUATION', '=', (14, 15), 2],
-        ['IDENTIFIER', 'label1', (16, 22), 2],
-        ['PUNCTUATION', ':', (22, 23), 2],
-        ['PUNCTUATION', '<', (24, 25), 2],
-        ['NUMBER', '0', (25, 26), 2],
-        ['IDENTIFIER', 'label2', (27, 33), 2],
-        ['PUNCTUATION', ':', (33, 34), 2],
-        ['NUMBER', '0x21323', (35, 42), 2],
-        ['PUNCTUATION', '>', (42, 43), 2],
-        ['PUNCTUATION', ';', (43, 44), 2],
-        ['IDENTIFIER', 'prop2', (49, 54), 3],
-        ['PUNCTUATION', '=', (55, 56), 3],
-        ['PUNCTUATION', '[', (57, 58), 3],
-        ['NUMBER', '1', (58, 59), 3],
-        ['NUMBER', '2', (60, 61), 3],
-        ['NUMBER', '3', (62, 63), 3],
-        ['IDENTIFIER', 'label3', (64, 70), 3],
-        ['PUNCTUATION', ':', (70, 71), 3],
-        ['NUMBER', '4', (72, 73), 3],
-        ['PUNCTUATION', ']', (73, 74), 3],
-        ['PUNCTUATION', ';', (74, 75), 3],
-        ['IDENTIFIER', 'prop3', (80, 85), 4],
-        ['PUNCTUATION', '=', (86, 87), 4],
-        ['IDENTIFIER', 'label4', (88, 94), 4],
-        ['PUNCTUATION', ':', (94, 95), 4],
-        ['STRING', '"val"', (96, 101), 4],
-        ['IDENTIFIER', 'label5', (102, 108), 4],
-        ['PUNCTUATION', ':', (108, 109), 4],
-        ['PUNCTUATION', ';', (110, 111), 4],
-        ['PUNCTUATION', '}', (112, 113), 5],
-        ['PUNCTUATION', ';', (113, 114), 5],
+        ['PUNCTUATION', '/'],
+        ['PUNCTUATION', '{'],
+        ['IDENTIFIER', 'prop1'],
+        ['PUNCTUATION', '='],
+        ['IDENTIFIER', 'label1'],
+        ['PUNCTUATION', ':'],
+        ['PUNCTUATION', '<'],
+        ['NUMBER', '0'],
+        ['IDENTIFIER', 'label2'],
+        ['PUNCTUATION', ':'],
+        ['NUMBER', '0x21323'],
+        ['PUNCTUATION', '>'],
+        ['PUNCTUATION', ';'],
+        ['IDENTIFIER', 'prop2'],
+        ['PUNCTUATION', '='],
+        ['PUNCTUATION', '['],
+        ['NUMBER', '1'],
+        ['NUMBER', '2'],
+        ['NUMBER', '3'],
+        ['IDENTIFIER', 'label3'],
+        ['PUNCTUATION', ':'],
+        ['NUMBER', '4'],
+        ['PUNCTUATION', ']'],
+        ['PUNCTUATION', ';'],
+        ['IDENTIFIER', 'prop3'],
+        ['PUNCTUATION', '='],
+        ['IDENTIFIER', 'label4'],
+        ['PUNCTUATION', ':'],
+        ['STRING', '"val"'],
+        ['IDENTIFIER', 'label5'],
+        ['PUNCTUATION', ':'],
+        ['PUNCTUATION', ';'],
+        ['PUNCTUATION', '}'],
+        ['PUNCTUATION', ';'],
     ], self.default_filtered_tokens + ('PUNCTUATION', 'NUMBER'))
 
     def test_references(self):
@@ -175,20 +223,20 @@ class DTSLexerTests(LexerTest):
     power-domains = <&power DEVICE_DOMAIN>;
 };
 """, [
-        ['IDENTIFIER', 'interrupt-parent', (8, 24), 2],
-        ['IDENTIFIER', 'node', (32, 36), 2],
-        ['IDENTIFIER', 'c2342', (37, 42), 2],
-        ['IDENTIFIER', 'another_node', (43, 55), 2],
-        ['IDENTIFIER', 'address', (56, 63), 2],
-        ['IDENTIFIER', 'node3', (67, 72), 2],
-        ['IDENTIFIER', 'property2', (81, 90), 3],
-        ['IDENTIFIER', 'node', (97, 101), 3],
-        ['IDENTIFIER', 'c2342', (102, 107), 3],
-        ['IDENTIFIER', 'another_node', (108, 120), 3],
-        ['IDENTIFIER', 'address', (121, 128), 3],
-        ['IDENTIFIER', 'power-domains', (139, 152), 4],
-        ['IDENTIFIER', 'power', (157, 162), 4],
-        ['IDENTIFIER', 'DEVICE_DOMAIN', (163, 176), 4],
+        ['IDENTIFIER', 'interrupt-parent'],
+        ['IDENTIFIER', 'node'],
+        ['IDENTIFIER', 'c2342'],
+        ['IDENTIFIER', 'another_node'],
+        ['IDENTIFIER', 'address'],
+        ['IDENTIFIER', 'node3'],
+        ['IDENTIFIER', 'property2'],
+        ['IDENTIFIER', 'node'],
+        ['IDENTIFIER', 'c2342'],
+        ['IDENTIFIER', 'another_node'],
+        ['IDENTIFIER', 'address'],
+        ['IDENTIFIER', 'power-domains'],
+        ['IDENTIFIER', 'power'],
+        ['IDENTIFIER', 'DEVICE_DOMAIN'],
     ])
 
     def test_property_types(self):
@@ -201,63 +249,63 @@ class DTSLexerTests(LexerTest):
     prop5;
 };
 """, [
-        ['PUNCTUATION', '/', (0, 1), 1],
-        ['PUNCTUATION', '{', (2, 3), 1],
-        ['IDENTIFIER', 'prop1', (8, 13), 2],
-        ['PUNCTUATION', '=', (14, 15), 2],
-        ['PUNCTUATION', '<', (16, 17), 2],
-        ['NUMBER', '0', (17, 18), 2],
-        ['NUMBER', '0x21323', (19, 26), 2],
-        ['PUNCTUATION', '>', (26, 27), 2],
-        ['PUNCTUATION', ';', (27, 28), 2],
-        ['IDENTIFIER', 'prop2', (33, 38), 3],
-        ['PUNCTUATION', '=', (39, 40), 3],
-        ['PUNCTUATION', '[', (41, 42), 3],
-        ['NUMBER', '1', (42, 43), 3],
-        ['NUMBER', '2', (44, 45), 3],
-        ['NUMBER', '3', (46, 47), 3],
-        ['NUMBER', '4', (48, 49), 3],
-        ['PUNCTUATION', ']', (49, 50), 3],
-        ['PUNCTUATION', ';', (50, 51), 3],
-        ['IDENTIFIER', 'prop3', (56, 61), 4],
-        ['PUNCTUATION', '=', (62, 63), 4],
-        ['STRING', '"val"', (64, 69), 4],
-        ['PUNCTUATION', ',', (69, 70), 4],
-        ['STRING', '"val4"', (71, 77), 4],
-        ['PUNCTUATION', ';', (78, 79), 4],
-        ['IDENTIFIER', 'prop4', (84, 89), 5],
-        ['PUNCTUATION', '=', (90, 91), 5],
-        ['PUNCTUATION', '<', (92, 93), 5],
-        ['PUNCTUATION', '~', (93, 94), 5],
-        ['NUMBER', '1', (94, 95), 5],
-        ['PUNCTUATION', '+', (95, 96), 5],
-        ['NUMBER', '2', (96, 97), 5],
-        ['PUNCTUATION', '-', (97, 98), 5],
-        ['NUMBER', '3', (98, 99), 5],
-        ['PUNCTUATION', '*', (99, 100), 5],
-        ['NUMBER', '4', (100, 101), 5],
-        ['PUNCTUATION', '/', (101, 102), 5],
-        ['NUMBER', '5', (102, 103), 5],
-        ['PUNCTUATION', '%', (103, 104), 5],
-        ['NUMBER', '6', (104, 105), 5],
-        ['PUNCTUATION', '&', (105, 106), 5],
-        ['NUMBER', '7', (106, 107), 5],
-        ['PUNCTUATION', '|', (107, 108), 5],
-        ['NUMBER', '8', (108, 109), 5],
-        ['PUNCTUATION', '^', (109, 110), 5],
-        ['NUMBER', '9', (110, 111), 5],
-        ['PUNCTUATION', '<', (111, 112), 5],
-        ['PUNCTUATION', '<', (112, 113), 5],
-        ['NUMBER', '10', (113, 115), 5],
-        ['PUNCTUATION', '>', (115, 116), 5],
-        ['PUNCTUATION', '>', (116, 117), 5],
-        ['NUMBER', '11', (117, 119), 5],
-        ['PUNCTUATION', '>', (119, 120), 5],
-        ['PUNCTUATION', ';', (120, 121), 5],
-        ['IDENTIFIER', 'prop5', (126, 131), 6],
-        ['PUNCTUATION', ';', (131, 132), 6],
-        ['PUNCTUATION', '}', (133, 134), 7],
-        ['PUNCTUATION', ';', (134, 135), 7],
+        ['PUNCTUATION', '/'],
+        ['PUNCTUATION', '{'],
+        ['IDENTIFIER', 'prop1'],
+        ['PUNCTUATION', '='],
+        ['PUNCTUATION', '<'],
+        ['NUMBER', '0'],
+        ['NUMBER', '0x21323'],
+        ['PUNCTUATION', '>'],
+        ['PUNCTUATION', ';'],
+        ['IDENTIFIER', 'prop2'],
+        ['PUNCTUATION', '='],
+        ['PUNCTUATION', '['],
+        ['NUMBER', '1'],
+        ['NUMBER', '2'],
+        ['NUMBER', '3'],
+        ['NUMBER', '4'],
+        ['PUNCTUATION', ']'],
+        ['PUNCTUATION', ';'],
+        ['IDENTIFIER', 'prop3'],
+        ['PUNCTUATION', '='],
+        ['STRING', '"val"'],
+        ['PUNCTUATION', ','],
+        ['STRING', '"val4"'],
+        ['PUNCTUATION', ';'],
+        ['IDENTIFIER', 'prop4'],
+        ['PUNCTUATION', '='],
+        ['PUNCTUATION', '<'],
+        ['PUNCTUATION', '~'],
+        ['NUMBER', '1'],
+        ['PUNCTUATION', '+'],
+        ['NUMBER', '2'],
+        ['PUNCTUATION', '-'],
+        ['NUMBER', '3'],
+        ['PUNCTUATION', '*'],
+        ['NUMBER', '4'],
+        ['PUNCTUATION', '/'],
+        ['NUMBER', '5'],
+        ['PUNCTUATION', '%'],
+        ['NUMBER', '6'],
+        ['PUNCTUATION', '&'],
+        ['NUMBER', '7'],
+        ['PUNCTUATION', '|'],
+        ['NUMBER', '8'],
+        ['PUNCTUATION', '^'],
+        ['NUMBER', '9'],
+        ['PUNCTUATION', '<'],
+        ['PUNCTUATION', '<'],
+        ['NUMBER', '10'],
+        ['PUNCTUATION', '>'],
+        ['PUNCTUATION', '>'],
+        ['NUMBER', '11'],
+        ['PUNCTUATION', '>'],
+        ['PUNCTUATION', ';'],
+        ['IDENTIFIER', 'prop5'],
+        ['PUNCTUATION', ';'],
+        ['PUNCTUATION', '}'],
+        ['PUNCTUATION', ';'],
     ], self.default_filtered_tokens + ('PUNCTUATION', 'NUMBER'))
 
     def test_comments(self):
@@ -272,20 +320,21 @@ class DTSLexerTests(LexerTest):
     */
 };
 """, [
-        ['COMMENT', '//license info\n', (0, 15), 1],
-        ['IDENTIFIER', 'interrupts', (23, 33), 3],
-        ['IDENTIFIER', 'NAME', (37, 41), 3],
-        ['IDENTIFIER', 'TYPE', (46, 50), 3],
-        ['COMMENT', '/* comment 1 */', (53, 68), 3],
-        ['IDENTIFIER', 'NAME', (78, 82), 4],
-        ['IDENTIFIER', 'TYPE', (87, 91), 4],
-        ['COMMENT', '// comemnt2\n', (94, 106), 4],
-        ['COMMENT', '/* long\n    * coment\n    * asdasd\n    */', (110, 150), 5],
+        ['COMMENT', '//license info\n'],
+        ['IDENTIFIER', 'interrupts'],
+        ['IDENTIFIER', 'NAME'],
+        ['IDENTIFIER', 'TYPE'],
+        ['COMMENT', '/* comment 1 */'],
+        ['IDENTIFIER', 'NAME'],
+        ['IDENTIFIER', 'TYPE'],
+        ['COMMENT', '// comemnt2\n'],
+        ['COMMENT', '/* long\n    * coment\n    * asdasd\n    */'],
     ], self.default_filtered_tokens)
 
 
 class KconfigLexer(LexerTest):
     lexer_cls = KconfigLexer
+    default_filtered_tokens = ("SPECIAL", "COMMENT", "STRING", "IDENTIFIER", "SPECIAL", "ERROR")
 
     # TODO improve macro calls
 
@@ -304,20 +353,20 @@ config 64BIT # comment2
         # comment 5
 
     # comment 6""", [
-            ['COMMENT', '# comment1\n', (0, 11), 1],
-            ['SPECIAL', 'config', (11, 17), 2],
-            ['IDENTIFIER', '64BIT', (18, 23), 2],
-            ['COMMENT', '# comment2\n', (24, 35), 2],
-            ['SPECIAL', 'bool', (39, 43), 3],
-            ['COMMENT', '# comment3\n', (44, 55), 3],
-            ['SPECIAL', 'default', (59, 66), 4],
-            ['STRING', '"# asd"', (67, 74), 4],
-            ['SPECIAL', 'default', (79, 86), 5],
-            ['SPECIAL', 'shell', (89, 94), 5],
-            ['SPECIAL', '\\#)', (96, 99), 5],
-            ['SPECIAL', 'help', (104, 108), 6],
-            ['COMMENT', '        asdasdsajdlakjd # not a comment\n\n        asdasdsajdlakjd # not a comment\n\n        # comment 5\n\n', (109, 212), 7],
-            ['COMMENT', '# comment 6\n', (216, 228), 13],
+            ['COMMENT', '# comment1\n'],
+            ['SPECIAL', 'config'],
+            ['IDENTIFIER', '64BIT'],
+            ['COMMENT', '# comment2\n'],
+            ['SPECIAL', 'bool'],
+            ['COMMENT', '# comment3\n'],
+            ['SPECIAL', 'default'],
+            ['STRING', '"# asd"'],
+            ['SPECIAL', 'default'],
+            ['SPECIAL', 'shell'],
+            ['SPECIAL', '\\#)'],
+            ['SPECIAL', 'help'],
+            ['COMMENT', '        asdasdsajdlakjd # not a comment\n\n        asdasdsajdlakjd # not a comment\n\n        # comment 5\n\n'],
+            ['COMMENT', '# comment 6\n'],
         ])
 
 
@@ -347,41 +396,41 @@ conifg 86CONIFG
         more help text
 
 endmenu""", [
-        ['SPECIAL', 'menu', (2, 6), 2],
-        ['STRING', '"menu name"', (7, 18), 2],
-        ['SPECIAL', 'visible', (20, 27), 4],
-        ['SPECIAL', 'if', (28, 30), 4],
-        ['SPECIAL', 'y', (31, 32), 4],
-        ['SPECIAL', 'choice', (34, 40), 6],
-        ['SPECIAL', 'prompt', (45, 51), 7],
-        ['STRING', '"test prompt"', (52, 65), 7],
-        ['SPECIAL', 'default', (70, 77), 8],
-        ['SPECIAL', 'y', (78, 79), 8],
-        ['SPECIAL', 'conifg', (81, 87), 10],
-        ['IDENTIFIER', '86CONIFG', (88, 96), 10],
-        ['SPECIAL', 'bool', (101, 105), 11],
-        ['STRING', '"text"', (106, 112), 11],
-        ['SPECIAL', 'prompt', (117, 123), 12],
-        ['STRING', '"prompt"', (124, 132), 12],
-        ['SPECIAL', 'default', (137, 144), 13],
-        ['SPECIAL', 'y', (145, 146), 13],
-        ['SPECIAL', 'tristate', (151, 159), 14],
-        ['STRING', '"test"', (160, 166), 14],
-        ['SPECIAL', 'def_bool', (171, 179), 15],
-        ['IDENTIFIER', 'TEST_bool', (180, 189), 15],
-        ['SPECIAL', 'depends', (194, 201), 16],
-        ['SPECIAL', 'on', (202, 204), 16],
-        ['IDENTIFIER', 'TEST', (205, 209), 16],
-        ['SPECIAL', 'select', (214, 220), 17],
-        ['IDENTIFIER', 'TEST2', (221, 226), 17],
-        ['SPECIAL', 'imply', (231, 236), 18],
-        ['IDENTIFIER', 'TEST3', (237, 242), 18],
-        ['SPECIAL', 'range', (247, 252), 19],
-        ['SPECIAL', 'if', (259, 261), 19],
-        ['IDENTIFIER', 'CONFIG_512', (262, 272), 19],
-        ['SPECIAL', 'help', (277, 281), 20],
-        ['COMMENT', '        help text\n\n        more help text\n\n', (282, 325), 21],
-        ['SPECIAL', 'endmenu', (325, 332), 25],
+        ['SPECIAL', 'menu'],
+        ['STRING', '"menu name"'],
+        ['SPECIAL', 'visible'],
+        ['SPECIAL', 'if'],
+        ['SPECIAL', 'y'],
+        ['SPECIAL', 'choice'],
+        ['SPECIAL', 'prompt'],
+        ['STRING', '"test prompt"'],
+        ['SPECIAL', 'default'],
+        ['SPECIAL', 'y'],
+        ['SPECIAL', 'conifg'],
+        ['IDENTIFIER', '86CONIFG'],
+        ['SPECIAL', 'bool'],
+        ['STRING', '"text"'],
+        ['SPECIAL', 'prompt'],
+        ['STRING', '"prompt"'],
+        ['SPECIAL', 'default'],
+        ['SPECIAL', 'y'],
+        ['SPECIAL', 'tristate'],
+        ['STRING', '"test"'],
+        ['SPECIAL', 'def_bool'],
+        ['IDENTIFIER', 'TEST_bool'],
+        ['SPECIAL', 'depends'],
+        ['SPECIAL', 'on'],
+        ['IDENTIFIER', 'TEST'],
+        ['SPECIAL', 'select'],
+        ['IDENTIFIER', 'TEST2'],
+        ['SPECIAL', 'imply'],
+        ['IDENTIFIER', 'TEST3'],
+        ['SPECIAL', 'range'],
+        ['SPECIAL', 'if'],
+        ['IDENTIFIER', 'CONFIG_512'],
+        ['SPECIAL', 'help'],
+        ['COMMENT', '        help text\n\n        more help text\n\n'],
+        ['SPECIAL', 'endmenu'],
     ])
 
     def test_conditions(self):
@@ -398,78 +447,78 @@ config TEST
     select TEST20 if !(TEST21 = TEST22)
     select TEST23 if TEST24 && TEST25
     select TEST26 if TEST27 || TEST28""", [
-        ['SPECIAL', 'config', (0, 6), 1],
-        ['IDENTIFIER', 'TEST', (7, 11), 1],
-        ['SPECIAL', 'select', (16, 22), 2],
-        ['IDENTIFIER', 'TEST1', (23, 28), 2],
-        ['SPECIAL', 'if', (29, 31), 2],
-        ['IDENTIFIER', 'TEST2', (32, 37), 2],
-        ['PUNCTUATION', '=', (38, 39), 2],
-        ['IDENTIFIER', 'TEST3', (40, 45), 2],
-        ['SPECIAL', 'select', (50, 56), 3],
-        ['IDENTIFIER', 'TEST2', (57, 62), 3],
-        ['SPECIAL', 'if', (63, 65), 3],
-        ['IDENTIFIER', 'TEST5', (66, 71), 3],
-        ['PUNCTUATION', '!', (72, 73), 3],
-        ['PUNCTUATION', '=', (73, 74), 3],
-        ['IDENTIFIER', 'TEST6', (75, 80), 3],
-        ['SPECIAL', 'select', (85, 91), 4],
-        ['IDENTIFIER', 'TEST7', (92, 97), 4],
-        ['SPECIAL', 'if', (98, 100), 4],
-        ['IDENTIFIER', 'TEST8', (101, 106), 4],
-        ['PUNCTUATION', '<', (107, 108), 4],
-        ['IDENTIFIER', 'TEST9', (109, 114), 4],
-        ['SPECIAL', 'select', (119, 125), 5],
-        ['IDENTIFIER', 'TEST10', (126, 132), 5],
-        ['SPECIAL', 'if', (133, 135), 5],
-        ['IDENTIFIER', 'TEST11', (136, 142), 5],
-        ['PUNCTUATION', '>', (143, 144), 5],
-        ['IDENTIFIER', 'TEST12', (145, 151), 5],
-        ['SPECIAL', 'select', (156, 162), 6],
-        ['IDENTIFIER', 'TEST13', (163, 169), 6],
-        ['SPECIAL', 'if', (170, 172), 6],
-        ['IDENTIFIER', 'TEST14', (173, 179), 6],
-        ['PUNCTUATION', '<', (180, 181), 6],
-        ['PUNCTUATION', '=', (181, 182), 6],
-        ['IDENTIFIER', 'TEST15', (184, 190), 6],
-        ['SPECIAL', 'select', (195, 201), 7],
-        ['IDENTIFIER', 'TEST16', (202, 208), 7],
-        ['SPECIAL', 'if', (212, 214), 7],
-        ['IDENTIFIER', 'TEST17', (215, 221), 7],
-        ['PUNCTUATION', '>', (224, 225), 7],
-        ['PUNCTUATION', '=', (225, 226), 7],
-        ['IDENTIFIER', 'TEST3', (227, 232), 7],
-        ['SPECIAL', 'select', (237, 243), 8],
-        ['IDENTIFIER', 'TEST17', (244, 250), 8],
-        ['SPECIAL', 'if', (251, 253), 8],
-        ['PUNCTUATION', '(', (254, 255), 8],
-        ['IDENTIFIER', 'TEST18', (255, 261), 8],
-        ['PUNCTUATION', '=', (262, 263), 8],
-        ['IDENTIFIER', 'TEST19', (264, 270), 8],
-        ['PUNCTUATION', ')', (270, 271), 8],
-        ['SPECIAL', 'select', (277, 283), 10],
-        ['IDENTIFIER', 'TEST20', (284, 290), 10],
-        ['SPECIAL', 'if', (291, 293), 10],
-        ['PUNCTUATION', '!', (294, 295), 10],
-        ['PUNCTUATION', '(', (295, 296), 10],
-        ['IDENTIFIER', 'TEST21', (296, 302), 10],
-        ['PUNCTUATION', '=', (303, 304), 10],
-        ['IDENTIFIER', 'TEST22', (305, 311), 10],
-        ['PUNCTUATION', ')', (311, 312), 10],
-        ['SPECIAL', 'select', (317, 323), 11],
-        ['IDENTIFIER', 'TEST23', (324, 330), 11],
-        ['SPECIAL', 'if', (331, 333), 11],
-        ['IDENTIFIER', 'TEST24', (334, 340), 11],
-        ['PUNCTUATION', '&', (341, 342), 11],
-        ['PUNCTUATION', '&', (342, 343), 11],
-        ['IDENTIFIER', 'TEST25', (344, 350), 11],
-        ['SPECIAL', 'select', (355, 361), 12],
-        ['IDENTIFIER', 'TEST26', (362, 368), 12],
-        ['SPECIAL', 'if', (369, 371), 12],
-        ['IDENTIFIER', 'TEST27', (372, 378), 12],
-        ['PUNCTUATION', '|', (379, 380), 12],
-        ['PUNCTUATION', '|', (380, 381), 12],
-        ['IDENTIFIER', 'TEST28', (382, 388), 12],
+        ['SPECIAL', 'config'],
+        ['IDENTIFIER', 'TEST'],
+        ['SPECIAL', 'select'],
+        ['IDENTIFIER', 'TEST1'],
+        ['SPECIAL', 'if'],
+        ['IDENTIFIER', 'TEST2'],
+        ['PUNCTUATION', '='],
+        ['IDENTIFIER', 'TEST3'],
+        ['SPECIAL', 'select'],
+        ['IDENTIFIER', 'TEST2'],
+        ['SPECIAL', 'if'],
+        ['IDENTIFIER', 'TEST5'],
+        ['PUNCTUATION', '!'],
+        ['PUNCTUATION', '='],
+        ['IDENTIFIER', 'TEST6'],
+        ['SPECIAL', 'select'],
+        ['IDENTIFIER', 'TEST7'],
+        ['SPECIAL', 'if'],
+        ['IDENTIFIER', 'TEST8'],
+        ['PUNCTUATION', '<'],
+        ['IDENTIFIER', 'TEST9'],
+        ['SPECIAL', 'select'],
+        ['IDENTIFIER', 'TEST10'],
+        ['SPECIAL', 'if'],
+        ['IDENTIFIER', 'TEST11'],
+        ['PUNCTUATION', '>'],
+        ['IDENTIFIER', 'TEST12'],
+        ['SPECIAL', 'select'],
+        ['IDENTIFIER', 'TEST13'],
+        ['SPECIAL', 'if'],
+        ['IDENTIFIER', 'TEST14'],
+        ['PUNCTUATION', '<'],
+        ['PUNCTUATION', '='],
+        ['IDENTIFIER', 'TEST15'],
+        ['SPECIAL', 'select'],
+        ['IDENTIFIER', 'TEST16'],
+        ['SPECIAL', 'if'],
+        ['IDENTIFIER', 'TEST17'],
+        ['PUNCTUATION', '>'],
+        ['PUNCTUATION', '='],
+        ['IDENTIFIER', 'TEST3'],
+        ['SPECIAL', 'select'],
+        ['IDENTIFIER', 'TEST17'],
+        ['SPECIAL', 'if'],
+        ['PUNCTUATION', '('],
+        ['IDENTIFIER', 'TEST18'],
+        ['PUNCTUATION', '='],
+        ['IDENTIFIER', 'TEST19'],
+        ['PUNCTUATION', ')'],
+        ['SPECIAL', 'select'],
+        ['IDENTIFIER', 'TEST20'],
+        ['SPECIAL', 'if'],
+        ['PUNCTUATION', '!'],
+        ['PUNCTUATION', '('],
+        ['IDENTIFIER', 'TEST21'],
+        ['PUNCTUATION', '='],
+        ['IDENTIFIER', 'TEST22'],
+        ['PUNCTUATION', ')'],
+        ['SPECIAL', 'select'],
+        ['IDENTIFIER', 'TEST23'],
+        ['SPECIAL', 'if'],
+        ['IDENTIFIER', 'TEST24'],
+        ['PUNCTUATION', '&'],
+        ['PUNCTUATION', '&'],
+        ['IDENTIFIER', 'TEST25'],
+        ['SPECIAL', 'select'],
+        ['IDENTIFIER', 'TEST26'],
+        ['SPECIAL', 'if'],
+        ['IDENTIFIER', 'TEST27'],
+        ['PUNCTUATION', '|'],
+        ['PUNCTUATION', '|'],
+        ['IDENTIFIER', 'TEST28'],
     ], self.default_filtered_tokens + ("PUNCTUATION",))
 
     def test_macros(self):
@@ -482,74 +531,74 @@ conifg TEST
     depends on $(filename)
     depends on $(lineno)
 """, [
-        ['SPECIAL', 'conifg', (0, 6), 1],
-        ['IDENTIFIER', 'TEST', (7, 11), 1],
-        ['SPECIAL', 'depends', (16, 23), 2],
-        ['SPECIAL', 'on', (24, 26), 2],
-        ['PUNCTUATION', '$', (27, 28), 2],
-        ['PUNCTUATION', '(', (28, 29), 2],
-        ['SPECIAL', 'shell', (29, 34), 2],
-        ['PUNCTUATION', ',', (34, 35), 2],
-        ['SPECIAL', 'cat', (35, 38), 2],
-        ['SPECIAL', 'file', (39, 43), 2],
-        ['PUNCTUATION', '|', (44, 45), 2],
-        ['SPECIAL', 'grep', (46, 50), 2],
-        ['PUNCTUATION', '-', (51, 52), 2],
-        ['SPECIAL', 'vi', (52, 54), 2],
-        ['STRING', '"option 2"', (55, 65), 2],
-        ['PUNCTUATION', ')', (65, 66), 2],
-        ['SPECIAL', 'depends', (71, 78), 3],
-        ['SPECIAL', 'on', (79, 81), 3],
-        ['PUNCTUATION', '$', (82, 83), 3],
-        ['PUNCTUATION', '(', (83, 84), 3],
-        ['SPECIAL', 'info', (84, 88), 3],
-        ['PUNCTUATION', ',', (88, 89), 3],
-        ['SPECIAL', 'info', (89, 93), 3],
-        ['SPECIAL', 'to', (94, 96), 3],
-        ['SPECIAL', 'print', (97, 102), 3],
-        ['PUNCTUATION', ')', (102, 103), 3],
-        ['SPECIAL', 'depends', (108, 115), 4],
-        ['SPECIAL', 'on', (116, 118), 4],
-        ['PUNCTUATION', '$', (119, 120), 4],
-        ['PUNCTUATION', '(', (120, 121), 4],
-        ['SPECIAL', 'warning-if', (121, 131), 4],
-        ['PUNCTUATION', ',', (131, 132), 4],
-        ['SPECIAL', 'a', (132, 133), 4],
-        ['PUNCTUATION', '!', (134, 135), 4],
-        ['PUNCTUATION', '=', (135, 136), 4],
-        ['SPECIAL', 'b', (137, 138), 4],
-        ['PUNCTUATION', ',', (138, 139), 4],
-        ['SPECIAL', 'warning', (139, 146), 4],
-        ['SPECIAL', 'to', (147, 149), 4],
-        ['SPECIAL', 'print', (150, 155), 4],
-        ['PUNCTUATION', ')', (155, 156), 4],
-        ['SPECIAL', 'depends', (161, 168), 5],
-        ['SPECIAL', 'on', (169, 171), 5],
-        ['PUNCTUATION', '$', (172, 173), 5],
-        ['PUNCTUATION', '(', (173, 174), 5],
-        ['SPECIAL', 'error-if', (174, 182), 5],
-        ['PUNCTUATION', ',', (182, 183), 5],
-        ['SPECIAL', 'a', (183, 184), 5],
-        ['PUNCTUATION', '!', (185, 186), 5],
-        ['PUNCTUATION', '=', (186, 187), 5],
-        ['SPECIAL', 'b', (188, 189), 5],
-        ['PUNCTUATION', ',', (189, 190), 5],
-        ['SPECIAL', 'warning', (190, 197), 5],
-        ['SPECIAL', 'to', (198, 200), 5],
-        ['SPECIAL', 'print', (201, 206), 5],
-        ['PUNCTUATION', ')', (206, 207), 5],
-        ['SPECIAL', 'depends', (212, 219), 6],
-        ['SPECIAL', 'on', (220, 222), 6],
-        ['PUNCTUATION', '$', (223, 224), 6],
-        ['PUNCTUATION', '(', (224, 225), 6],
-        ['SPECIAL', 'filename', (225, 233), 6],
-        ['PUNCTUATION', ')', (233, 234), 6],
-        ['SPECIAL', 'depends', (239, 246), 7],
-        ['SPECIAL', 'on', (247, 249), 7],
-        ['PUNCTUATION', '$', (250, 251), 7],
-        ['PUNCTUATION', '(', (251, 252), 7],
-        ['SPECIAL', 'lineno', (252, 258), 7],
-        ['PUNCTUATION', ')', (258, 259), 7],
+        ['SPECIAL', 'conifg'],
+        ['IDENTIFIER', 'TEST'],
+        ['SPECIAL', 'depends'],
+        ['SPECIAL', 'on'],
+        ['PUNCTUATION', '$'],
+        ['PUNCTUATION', '('],
+        ['SPECIAL', 'shell'],
+        ['PUNCTUATION', ','],
+        ['SPECIAL', 'cat'],
+        ['SPECIAL', 'file'],
+        ['PUNCTUATION', '|'],
+        ['SPECIAL', 'grep'],
+        ['PUNCTUATION', '-'],
+        ['SPECIAL', 'vi'],
+        ['STRING', '"option 2"'],
+        ['PUNCTUATION', ')'],
+        ['SPECIAL', 'depends'],
+        ['SPECIAL', 'on'],
+        ['PUNCTUATION', '$'],
+        ['PUNCTUATION', '('],
+        ['SPECIAL', 'info'],
+        ['PUNCTUATION', ','],
+        ['SPECIAL', 'info'],
+        ['SPECIAL', 'to'],
+        ['SPECIAL', 'print'],
+        ['PUNCTUATION', ')'],
+        ['SPECIAL', 'depends'],
+        ['SPECIAL', 'on'],
+        ['PUNCTUATION', '$'],
+        ['PUNCTUATION', '('],
+        ['SPECIAL', 'warning-if'],
+        ['PUNCTUATION', ','],
+        ['SPECIAL', 'a'],
+        ['PUNCTUATION', '!'],
+        ['PUNCTUATION', '='],
+        ['SPECIAL', 'b'],
+        ['PUNCTUATION', ','],
+        ['SPECIAL', 'warning'],
+        ['SPECIAL', 'to'],
+        ['SPECIAL', 'print'],
+        ['PUNCTUATION', ')'],
+        ['SPECIAL', 'depends'],
+        ['SPECIAL', 'on'],
+        ['PUNCTUATION', '$'],
+        ['PUNCTUATION', '('],
+        ['SPECIAL', 'error-if'],
+        ['PUNCTUATION', ','],
+        ['SPECIAL', 'a'],
+        ['PUNCTUATION', '!'],
+        ['PUNCTUATION', '='],
+        ['SPECIAL', 'b'],
+        ['PUNCTUATION', ','],
+        ['SPECIAL', 'warning'],
+        ['SPECIAL', 'to'],
+        ['SPECIAL', 'print'],
+        ['PUNCTUATION', ')'],
+        ['SPECIAL', 'depends'],
+        ['SPECIAL', 'on'],
+        ['PUNCTUATION', '$'],
+        ['PUNCTUATION', '('],
+        ['SPECIAL', 'filename'],
+        ['PUNCTUATION', ')'],
+        ['SPECIAL', 'depends'],
+        ['SPECIAL', 'on'],
+        ['PUNCTUATION', '$'],
+        ['PUNCTUATION', '('],
+        ['SPECIAL', 'lineno'],
+        ['PUNCTUATION', ')'],
     ], self.default_filtered_tokens + ("PUNCTUATION",))
 
     def test_help(self):
@@ -577,18 +626,18 @@ config
 config
     select TEST
 """, [
-        ['SPECIAL', 'config', (0, 6), 1],
-        ['SPECIAL', 'help', (11, 15), 2],
-        ['COMMENT', '     help test lasdlkajdk sadlksajd\n     lsajdlad\n\n     salkdjaldlksajd\n\n     "\n     asdlkajsdlkjsadlajdsk\n\n     salkdjlsakdj\'\n', (16, 143), 3],
-        ['SPECIAL', 'config', (143, 149), 12],
-        ['SPECIAL', 'select', (154, 160), 13],
-        ['IDENTIFIER', 'TEST', (161, 165), 13],
-        ['SPECIAL', 'config', (166, 172), 14],
-        ['SPECIAL', '---help---', (177, 187), 15],
-        ['COMMENT', '     help test lasdlkajdk sadlksajd\n     lsajdlad\n\n     salkdjaldlksajd\n        \n', (188, 269), 16],
-        ['SPECIAL', 'config', (269, 275), 21],
-        ['SPECIAL', 'select', (280, 286), 22],
-        ['IDENTIFIER', 'TEST', (287, 291), 22],
+        ['SPECIAL', 'config'],
+        ['SPECIAL', 'help'],
+        ['COMMENT', '     help test lasdlkajdk sadlksajd\n     lsajdlad\n\n     salkdjaldlksajd\n\n     "\n     asdlkajsdlkjsadlajdsk\n\n     salkdjlsakdj\'\n'],
+        ['SPECIAL', 'config'],
+        ['SPECIAL', 'select'],
+        ['IDENTIFIER', 'TEST'],
+        ['SPECIAL', 'config'],
+        ['SPECIAL', '---help---'],
+        ['COMMENT', '     help test lasdlkajdk sadlksajd\n     lsajdlad\n\n     salkdjaldlksajd\n        \n'],
+        ['SPECIAL', 'config'],
+        ['SPECIAL', 'select'],
+        ['IDENTIFIER', 'TEST'],
     ])
 
     def test_types(self):
@@ -613,35 +662,418 @@ config
     int
     default 21312323
 """, [
-        ['SPECIAL', 'config', (0, 6), 1],
-        ['SPECIAL', 'bool', (11, 15), 2],
-        ['SPECIAL', 'default', (20, 27), 3],
-        ['SPECIAL', 'y', (28, 29), 3],
-        ['SPECIAL', 'config', (31, 37), 5],
-        ['SPECIAL', 'tristate', (42, 50), 6],
-        ['SPECIAL', 'default', (55, 62), 7],
-        ['SPECIAL', 'm', (63, 64), 7],
-        ['SPECIAL', 'config', (66, 72), 9],
-        ['SPECIAL', 'hex', (77, 80), 10],
-        ['SPECIAL', 'default', (82, 89), 11],
-        ['IDENTIFIER', '0xdfffffff00000000', (90, 108), 11],
-        ['SPECIAL', 'config', (110, 116), 13],
-        ['SPECIAL', 'string', (121, 127), 14],
-        ['SPECIAL', 'default', (132, 139), 15],
-        ['STRING', '"string \\" test # \\# zxc"', (140, 165), 15],
-        ['SPECIAL', 'config', (167, 173), 17],
-        ['SPECIAL', 'int', (178, 181), 18],
-        ['SPECIAL', 'default', (186, 193), 19],
+        ['SPECIAL', 'config'],
+        ['SPECIAL', 'bool'],
+        ['SPECIAL', 'default'],
+        ['SPECIAL', 'y'],
+        ['SPECIAL', 'config'],
+        ['SPECIAL', 'tristate'],
+        ['SPECIAL', 'default'],
+        ['SPECIAL', 'm'],
+        ['SPECIAL', 'config'],
+        ['SPECIAL', 'hex'],
+        ['SPECIAL', 'default'],
+        ['IDENTIFIER', '0xdfffffff00000000'],
+        ['SPECIAL', 'config'],
+        ['SPECIAL', 'string'],
+        ['SPECIAL', 'default'],
+        ['STRING', '"string \\" test # \\# zxc"'],
+        ['SPECIAL', 'config'],
+        ['SPECIAL', 'int'],
+        ['SPECIAL', 'default'],
     ])
 
-class CLexerTest(unittest.TestCase):
+class CLexerTest(LexerTest):
     lexer_cls = CLexer
+    default_filtered_tokens = ("SPECIAL", "COMMENT", "STRING", "IDENTIFIER", "SPECIAL", "ERROR")
 
-    # comments with escapes
-    # weird numbers
-    # string concat
-    # newline escapes in macros
-    # includes, warnings, errors, pragmas
+    def test_if0(self):
+        self.lex(r"""
+#if 0
+static bool test_v3_0_test(void *h,
+                    enum type_enum e) {
+    return false;
+}
+#endif
+static bool test_v3_0_test(void *h,
+                    enum type_enum e) {
+    return false;
+}
+""", [
+        ['SPECIAL', '#if'],
+        ['NUMBER', '0'],
+        ['IDENTIFIER', 'static'],
+        ['IDENTIFIER', 'bool'],
+        ['IDENTIFIER', 'test_v3_0_test'],
+        ['IDENTIFIER', 'void'],
+        ['IDENTIFIER', 'h'],
+        ['IDENTIFIER', 'enum'],
+        ['IDENTIFIER', 'type_enum'],
+        ['IDENTIFIER', 'e'],
+        ['IDENTIFIER', 'return'],
+        ['IDENTIFIER', 'false'],
+        ['SPECIAL', '#endif'],
+        ['IDENTIFIER', 'static'],
+        ['IDENTIFIER', 'bool'],
+        ['IDENTIFIER', 'test_v3_0_test'],
+        ['IDENTIFIER', 'void'],
+        ['IDENTIFIER', 'h'],
+        ['IDENTIFIER', 'enum'],
+        ['IDENTIFIER', 'type_enum'],
+        ['IDENTIFIER', 'e'],
+        ['IDENTIFIER', 'return'],
+        ['IDENTIFIER', 'false'],
+    ], self.default_filtered_tokens + ("NUMBER",))
+
+    def test_preproc(self):
+        self.lex(r"""
+#include <stdio.h>
+#   include <stdio.h>
+# include "test.h"
+#   include "test.h"
+
+# warning war
+#       error err
+    #       error err
+    #warning war
+
+#error "escaped\
+        message"
+
+#warning "escaped\  
+        message"
+""", [
+        ['SPECIAL', '#include <stdio.h>'],
+        ['SPECIAL', '#   include <stdio.h>'],
+        ['SPECIAL', '# include "test.h"'],
+        ['SPECIAL', '#   include "test.h"'],
+        ['SPECIAL', '# warning war\n'],
+        ['SPECIAL', '#       error err\n'],
+        ['SPECIAL', '#       error err\n'],
+        ['SPECIAL', '#warning war\n'],
+        ['SPECIAL', '#error "escaped\\\n        message"\n'],
+        ['SPECIAL', '#warning "escaped\\  \n        message"\n'],
+    ])
+
+    def test_defines(self):
+        self.lex("""
+# define test "long string \
+    escaped newline"
+
+    #define     test define1
+#       define     test2 define12323
+
+#define func(name, arg1,arg2...) \
+    void name##f() { \
+        return arg1 + arg2;
+    }
+""", [
+        ['SPECIAL', '# define'],
+        ['IDENTIFIER', 'test'],
+        ['STRING', '"long string     escaped newline"'],
+        ['SPECIAL', '#define'],
+        ['IDENTIFIER', 'test'],
+        ['IDENTIFIER', 'define1'],
+        ['SPECIAL', '#       define'],
+        ['IDENTIFIER', 'test2'],
+        ['IDENTIFIER', 'define12323'],
+        ['SPECIAL', '#define'],
+        ['IDENTIFIER', 'func'],
+        ['IDENTIFIER', 'name'],
+        ['IDENTIFIER', 'arg1'],
+        ['IDENTIFIER', 'arg2'],
+        ['IDENTIFIER', 'void'],
+        ['IDENTIFIER', 'name'],
+        ['IDENTIFIER', 'f'],
+        ['IDENTIFIER', 'return'],
+        ['IDENTIFIER', 'arg1'],
+        ['IDENTIFIER', 'arg2'],
+    ])
+
+    def test_strings(self):
+        self.lex(r"""
+"asdsad \   
+    asdasd";
+'asdsad \
+    asdasd';
+u8"test string";
+u"test string";
+u"test string";
+L"test string";
+"test \" string";
+"test ' string";
+"test \' string";
+"test \n string";
+"\xff";
+"test" "string";
+"test""string";
+"test"
+    "string";
+        char* s1 = "asdjlsajdlksad""asdsajdlsad";       //comment6
+    char* s2 = "asdjlsajdlksad"  "asdsajdlsad";         // \
+                                                        single line comment \
+        with escapes
+    char* s3 = " asdsaldjkas \"";
+    char* s4 = " asdsaldjkas \" zxclzxclk \" asljda";
+    char* s5 = " asdsaldjkas \' zxclzxclk \" asljda";
+    char* s6 = " asdsaldjkas \"\"\" zxclzxclk \'\'\' ; asljda";
+    char* s7 = u8"test";
+""", [
+        ['STRING', '"asdsad \\   \n    asdasd"'],
+        ['STRING', "'asdsad \\\n    asdasd'"],
+        ['IDENTIFIER', 'u8'],
+        ['STRING', '"test string"'],
+        ['IDENTIFIER', 'u'],
+        ['STRING', '"test string"'],
+        ['IDENTIFIER', 'u'],
+        ['STRING', '"test string"'],
+        ['IDENTIFIER', 'L'],
+        ['STRING', '"test string"'],
+        ['STRING', '"test \\" string"'],
+        ['STRING', '"test \' string"'],
+        ['STRING', '"test \\\' string"'],
+        ['STRING', '"test \\n string"'],
+        ['STRING', '"\\xff"'],
+        ['STRING', '"test"'],
+        ['STRING', '"string"'],
+        ['STRING', '"test"'],
+        ['STRING', '"string"'],
+        ['STRING', '"test"'],
+        ['STRING', '"string"'],
+        ['IDENTIFIER', 'char'],
+        ['IDENTIFIER', 's1'],
+        ['STRING', '"asdjlsajdlksad"'],
+        ['STRING', '"asdsajdlsad"'],
+        ['COMMENT', '//comment6\n'],
+        ['IDENTIFIER', 'char'],
+        ['IDENTIFIER', 's2'],
+        ['STRING', '"asdjlsajdlksad"'],
+        ['STRING', '"asdsajdlsad"'],
+        ['COMMENT', '// \\\n                                                        single line comment \\\n        with escapes\n'],
+        ['IDENTIFIER', 'char'],
+        ['IDENTIFIER', 's3'],
+        ['STRING', '" asdsaldjkas \\""'],
+        ['IDENTIFIER', 'char'],
+        ['IDENTIFIER', 's4'],
+        ['STRING', '" asdsaldjkas \\" zxclzxclk \\" asljda"'],
+        ['IDENTIFIER', 'char'],
+        ['IDENTIFIER', 's5'],
+        ['STRING', '" asdsaldjkas \\\' zxclzxclk \\" asljda"'],
+        ['IDENTIFIER', 'char'],
+        ['IDENTIFIER', 's6'],
+        ['STRING', '" asdsaldjkas \\"\\"\\" zxclzxclk \\\'\\\'\\\' ; asljda"'],
+        ['IDENTIFIER', 'char'],
+        ['IDENTIFIER', 's7'],
+        ['IDENTIFIER', 'u8'],
+        ['STRING', '"test"'],
+    ])
+
+    def test_chars(self):
+        self.lex(r"""
+'a';
+u8'a';
+u'a';
+U'a';
+'\'';
+'\"';
+'\\';
+'\n';
+'\f';
+'\U0001f34c';
+'\13';
+'\x1234';
+'\u213';
+u'ą';
+""", [
+        ['STRING', "'a'"],
+        ['IDENTIFIER', 'u8'],
+        ['STRING', "'a'"],
+        ['IDENTIFIER', 'u'],
+        ['STRING', "'a'"],
+        ['IDENTIFIER', 'U'],
+        ['STRING', "'a'"],
+        ['STRING', "'\\''"],
+        ['STRING', '\'\\"\''],
+        ['STRING', "'\\\\'"],
+        ['STRING', "'\\n'"],
+        ['STRING', "'\\f'"],
+        ['STRING', "'\\U0001f34c'"],
+        ['STRING', "'\\13'"],
+        ['STRING', "'\\x1234'"],
+        ['STRING', "'\\u213'"],
+        ['IDENTIFIER', 'u'],
+        ['STRING', "'ą'"],
+    ])
+
+    def test_numbers(self):
+        self.lex(r"""
+1239183;
+-1239183;
+0xAB08902;
+-0xAB08902;
+0Xab08902;
+-0Xab08902;
+0b0101001;
+-0b0101001;
+0B0101001;
+-0B0101001;
+0231273;
+-0231273;
+""", [
+        ['NUMBER', '1239183'],
+        ['NUMBER', '1239183'],
+        ['NUMBER', '0xAB08902'],
+        ['NUMBER', '0xAB08902'],
+        ['NUMBER', '0Xab08902'],
+        ['NUMBER', '0Xab08902'],
+        ['NUMBER', '0b0101001'],
+        ['NUMBER', '0b0101001'],
+        ['NUMBER', '0B0101001'],
+        ['NUMBER', '0B0101001'],
+        ['NUMBER', '0231273'],
+        ['NUMBER', '0231273'],
+    ], self.default_filtered_tokens + ("NUMBER",))
+
+    def test_floats(self):
+        self.lex(r"""
+double       e = 0x2ABDEFabcdef;
+double
+    f = 017.048509495;
+double     -g = 0b1010010;
+double     g = 0b1010010;
+-017.048509495;
+017.048509495;
+-017.048509495e-12329123;
+017.048509495e-12329123;
+-0x123.fp34;
+0x123.fp34;
+-0x123.fP34;
+0x123.fP34;
+-0x123.fe1p123;
+0x123.fe1p123;
+-0x123.fe1p123;
+0x123.fe1p123;
+-.1;
+.1;
+-1.;
+1.;
+-0x1.ep+3;
+0x1.ep+3;
+-0X183083;
+0X183083;
+-0x213213.1231212'31e21p-2;
+0x213213.1231212'31e21p-2;
+-123123.123e2;
+123123.123e2;
+""", [
+        ['IDENTIFIER', 'double'],
+        ['IDENTIFIER', 'e'],
+        ['NUMBER', '0x2ABDEFabcdef'],
+        ['IDENTIFIER', 'double'],
+        ['IDENTIFIER', 'f'],
+        ['NUMBER', '017.048509495'],
+        ['IDENTIFIER', 'double'],
+        ['IDENTIFIER', 'g'],
+        ['NUMBER', '0b1010010'],
+        ['IDENTIFIER', 'double'],
+        ['IDENTIFIER', 'g'],
+        ['NUMBER', '0b1010010'],
+        ['NUMBER', '017.048509495'],
+        ['NUMBER', '017.048509495'],
+        ['NUMBER', '017.048509495e-12329123'],
+        ['NUMBER', '017.048509495e-12329123'],
+        ['NUMBER', '0x123.fp34'],
+        ['NUMBER', '0x123.fp34'],
+        ['NUMBER', '0x123.fP34'],
+        ['NUMBER', '0x123.fP34'],
+        ['NUMBER', '0x123.fe1p123'],
+        ['NUMBER', '0x123.fe1p123'],
+        ['NUMBER', '0x123.fe1p123'],
+        ['NUMBER', '0x123.fe1p123'],
+        ['NUMBER', '1'],
+        ['NUMBER', '1'],
+        ['NUMBER', '1.'],
+        ['NUMBER', '1.'],
+        ['NUMBER', '0x1.ep+3'],
+        ['NUMBER', '0x1.ep+3'],
+        ['NUMBER', '0X183083'],
+        ['NUMBER', '0X183083'],
+        ['NUMBER', "0x213213.1231212'31e21p-2"],
+        ['NUMBER', "0x213213.1231212'31e21p-2"],
+        ['NUMBER', '123123.123e2'],
+        ['NUMBER', '123123.123e2'],
+    ], self.default_filtered_tokens + ("NUMBER",))
+
+    def test_longs(self):
+        self.lex(r"""
+-123213092183ul;
+123213092183ul;
+-123213092183ull;
+123213092183ull;
+-123213092183llu;
+123213092183llu;
+-123213092183uLL;
+123213092183uLL;
+-123213092183LLU;
+123213092183LLU;
+-1232'13092183LLU;
+1232'13092183LLU;
+-1232'1309'2183LLU;
+1232'1309'2183LLU;
+-1232'1309'218'3LLU;
+1232'1309'218'3LLU;
+""", [
+        ['NUMBER', '123213092183ul'],
+        ['NUMBER', '123213092183ul'],
+        ['NUMBER', '123213092183ull'],
+        ['NUMBER', '123213092183ull'],
+        ['NUMBER', '123213092183llu'],
+        ['NUMBER', '123213092183llu'],
+        ['NUMBER', '123213092183uLL'],
+        ['NUMBER', '123213092183uLL'],
+        ['NUMBER', '123213092183LLU'],
+        ['NUMBER', '123213092183LLU'],
+        ['NUMBER', "1232'13092183LLU"],
+        ['NUMBER', "1232'13092183LLU"],
+        ['NUMBER', "1232'1309'2183LLU"],
+        ['NUMBER', "1232'1309'2183LLU"],
+        ['NUMBER', "1232'1309'218'3LLU"],
+        ['NUMBER', "1232'1309'218'3LLU"],
+    ], self.default_filtered_tokens + ("NUMBER",))
+
+    def test_comments(self):
+        self.lex(r"""
+    /*comment1*/
+    /* comment2*/
+    /* comment3 */
+    /*
+     *
+        comment4
+    _+}{|":?><~!@#$%&*()_+`123567890-=[];'\,./
+     * */
+
+    /* comment 5 \*\// */
+
+// comment5
+char* s2 = "asdjlsajdlksad"  "asdsajdlsad";         // \
+                                   single line comment \
+        with escapes
+char statement;
+""", [
+        ['COMMENT', '/*comment1*/'],
+        ['COMMENT', '/* comment2*/'],
+        ['COMMENT', '/* comment3 */'],
+        ['COMMENT', '/*\n     *\n        comment4\n    _+}{|":?><~!@#$%&*()_+`123567890-=[];\'\\,./\n     * */'],
+        ['COMMENT', '/* comment 5 \\*\\// */'],
+        ['COMMENT', '// comment5\n'],
+        ['IDENTIFIER', 'char'],
+        ['IDENTIFIER', 's2'],
+        ['STRING', '"asdjlsajdlksad"'],
+        ['STRING', '"asdsajdlsad"'],
+        ['COMMENT', '// \\\n                                   single line comment \\\n        with escapes\n'],
+        ['IDENTIFIER', 'char'],
+        ['IDENTIFIER', 'statement'],
+    ])
 
 class GasLexerTest(unittest.TestCase):
     lexer_cls = GasLexer
