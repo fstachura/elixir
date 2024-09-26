@@ -270,28 +270,29 @@ class GasLexer:
     # /musl/v1.2.5/source/src/string/aarch64/memcpy.S#L92
     gasm_identifier = r'[a-zA-Z0-9_][a-zA-Z0-9_$.]*'
 
-    gasm_flonum = r'0?\.[a-zA-Z][+-][0-9]*\.[0-9]*([eE][+-]*[0-9]+)?'
-    gasm_number = regex_or(shared.common_hexidecimal_integer, shared.common_binary_integer,
-                           shared.common_decimal_integer, gasm_flonum)
+    gasm_flonum = r'0?[a-zA-Z][+-]?[0-9]*\.[0-9]*([eE][+-]?[0-9]+)?'
+    gasm_number = regex_or(gasm_flonum, shared.common_hexidecimal_integer, shared.common_binary_integer,
+                           shared.common_decimal_integer)
 
     gasm_char = r"'(\\.|.|\n)"
     gasm_string = f'(({ shared.double_quote_string_with_escapes })|({ gasm_char }))'
 
     gasm_comment_chars_map = {
-        'generic': ('#',),
+        'generic': (r'#\s',),
 
-        'nios2': ('#',),
-        'openrisc': ('#',),
-        'powerpc': ('#',),
-        's390': ('#',),
-        'xtensa': ('#',),
-        'microblaze': ('#',),
-        'mips': ('#',),
-        'alpha': ('#',),
-        'csky': ('#',),
+        'nios2': (r'#\s',),
+        'openrisc': (r'#\s',),
+        'powerpc': (r'#\s',),
+        's390': (r'#\s',),
+        'xtensa': (r'#\s',),
+        'microblaze': (r'#\s',),
+        'mips': (r'#\s',),
+        'alpha': (r'#\s',),
+        'csky': (r'#\s',),
         # BUT double pipe in macros is an operator... and # not in the first line in 
-        # m68k/ifpsp060/src/fplsp.S
-        'm68k': ('|', '#'), 
+        # /linux/v6.10.7/source/arch/m68k/ifpsp060/src/fplsp.S
+        'm68k': ('|', r'#\s'), 
+        'arc': ('# ', ';'),
 
         # https://sourceware.org/binutils/docs/as.html#HPPA-Syntax
         # /linux/v6.10.7/source/arch/parisc/kernel/perf_asm.S#L28
@@ -307,7 +308,6 @@ class GasLexer:
         # https://sourceware.org/binutils/docs/as.html#Sparc_002dSyntax
         # /linux/v6.10.7/source/arch/sparc/lib/memset.S#L125
         'sparc': ('!', '^#'),
-        'arc': ('#', ';', '^#'),
         # used in ARM https://sourceware.org/binutils/docs/as.html#ARM-Syntax
         # /linux/v6.10.7/source/arch/arm/mach-sa1100/sleep.S#L33
         'arm32': ('@', '^#'),
@@ -325,6 +325,7 @@ class GasLexer:
         ('##', TokenType.PUNCTUATION),
         # don't interpret pipe as a comment
         ('||', TokenType.PUNCTUATION),
+        (FirstInLine(shared.c_preproc_ignore), TokenType.SPECIAL),
         (FirstInLine(gasm_preprocessor), TokenType.SPECIAL),
         (shared.common_slash_comment, TokenType.COMMENT),
     ]
