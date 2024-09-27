@@ -235,11 +235,18 @@ h2 {
 .search input:focus {
   outline: 0 none;
 }
-.filter button,
-.search button {
+.filter button {
   position: absolute;
   right: 0;
   bottom: 0;
+  border: 0 none;
+  font-size: 1.7em;
+  height: 1.5em;
+  background: transparent;
+  color: #999;
+  cursor: pointer;
+}
+.search button {
   border: 0 none;
   font-size: 1.7em;
   height: 1.5em;
@@ -318,6 +325,11 @@ h2 {
 }
 .search option { /* Firefox ignores that on linux but the default color is close */
   background-color: #ccc;
+}
+.search .search-controls {
+  flex: 3;
+  display: flex;
+  flex-direction: row;
 }
 
 .filter {
@@ -595,6 +607,14 @@ h2 {
 /* tag menu tree open */
 .js .sidebar li span.active + ul {
   display: block;
+}
+
+.visible-if-js {
+  display: none;
+}
+
+.js .visible-if-js {
+  display: revert;
 }
 
 .no-js .sidebar:target {
