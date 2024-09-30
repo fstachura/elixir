@@ -11,43 +11,39 @@
 {% block main %}
 
 <div class="lxrident">
-{% if symbol_sections|length != 0 %}
-    {% for section in symbol_sections %}
-        {% if 'symbols' in section %}
-            {% for type, symbols in section['symbols'].items() %}
-                <h2>{{ section['title'] }} in {{ symbols|length }} files
-                    {{- ' as a '+type if type != '_unknown' else '' -}}:</h2>
-                <ul>
-                {% for symbol in symbols %}
-                    <li>
-                    <a href="{{ symbol.lines[0].url }}">
-                        <strong>{{ symbol.path }}</strong>
-                        {%- if symbol.lines|length == 1 %},
-                            line {{ symbol.lines[0].lineno }}
-                        {%- elif symbols|length > 100 %},
-                            <em>{{ symbol.lines|length }} times</em>
-                        {% endif %}
-                        {% if symbol.type is not none %}
-                            <em>(as a {{ symbol.type }})</em>
-                        {% endif %}
-                    </a>
-                    {% if symbol.lines|length > 1 and symbols|length <= 100 %}
-                        <ul>
-                        {% for line, url in symbol.lines %}
-                            <li><a href="{{ url }}">line {{ line }}</a>
-                        {% endfor %}
-                        </ul>
+{% for section in symbol_sections %}
+    {% if 'symbols' in section %}
+        {% for type, symbols in section['symbols'].items() %}
+            <h2>{{ section['title'] }} in {{ symbols|length }} files
+                {{- ' as a '+type if type != '_unknown' else '' -}}:</h2>
+            <ul>
+            {% for symbol in symbols %}
+                <li>
+                <a href="{{ symbol.lines[0].url }}">
+                    <strong>{{ symbol.path }}</strong>
+                    {%- if symbol.lines|length == 1 %},
+                        line {{ symbol.lines[0].lineno }}
+                    {%- elif symbols|length > 100 %},
+                        <em>{{ symbol.lines|length }} times</em>
                     {% endif %}
-                {% endfor %}
-                </ul>
+                    {% if symbol.type is not none %}
+                        <em>(as a {{ symbol.type }})</em>
+                    {% endif %}
+                </a>
+                {% if symbol.lines|length > 1 and symbols|length <= 100 %}
+                    <ul>
+                    {% for line, url in symbol.lines %}
+                        <li><a href="{{ url }}">line {{ line }}</a>
+                    {% endfor %}
+                    </ul>
+                {% endif %}
             {% endfor %}
-        {% else %}
-            <h2>{{ section['message'] }}</h2>
-        {% endif %}
-    {% endfor %}
-{% else %}
-    <h2>Identifier not used</h2>
-{% endif %}
+            </ul>
+        {% endfor %}
+    {% else %}
+        <h2>{{ section['message'] }}</h2>
+    {% endif %}
+{% endfor %}
 </div>
 
 {% endblock %}

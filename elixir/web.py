@@ -676,8 +676,14 @@ def generate_ident_page(ctx, q, project, version, family, ident):
             })
 
     else:
-        if ident != '':
-            status = falcon.HTTP_NOT_FOUND
+        raise ElixirProjectError('Identifier not found',
+                         'Identifier has not been found in this project. '
+                         'It may still be used in other versions of the project.',
+                          project=project, version=version, query=q,
+                          extra_template_args={
+                              'searched_ident': parse.unquote(ident),
+                              'current_family': family,
+                          })
 
     get_url_with_new_version = lambda v: stringify_ident_path(project, v, family, ident)
 
