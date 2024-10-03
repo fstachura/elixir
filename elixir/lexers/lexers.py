@@ -278,7 +278,7 @@ class GasLexer:
     gasm_string = f'(({ shared.double_quote_string_with_escapes })|({ gasm_char }))'
 
     gasm_comment_chars_map = {
-        'generic': (r'#',),
+        'generic': (r'#\s',),
 
         'nios2': (r'#',),
         'openrisc': (r'#',),
@@ -345,8 +345,8 @@ class GasLexer:
     def get_arch_rules(self):
         result = []
 
-        regex_chars = r'*?+^.$\\[]|()'
-        add_slash = lambda ch: r'\\' + ch if ch in regex_chars else ch
+        regex_chars = '*?+^.$\\[]|()'
+        add_slash = lambda ch: '\\' + ch if ch in regex_chars else ch
 
         for comment_char in self.comment_chars:
             if comment_char[0] == '^':
@@ -368,4 +368,35 @@ class GasLexer:
                 self.rules_after_comments
 
         return simple_lexer(rules, self.code)
+
+
+# https://www.gnu.org/software/make/manual/make.html
+class MakefileLexer:
+    # TODO read https://pubs.opengroup.org/onlinepubs/007904975/utilities/make.html
+
+    # NOTE same as in KConfig, we only care about screaming case names
+    make_identifier = r'[A-Z0-9_]+'
+    make_minor_identifier = r'[a-zA-Z0-9_][a-zA-Z0-9-_]*'
+    make_variable = r'(\$\([a-zA-Z0-9_-]\)|\$\{[a-zA-Z0-9_-]\})'
+    make_single_quote_string = r"'*?'"
+    make_string = f'(({ make_single_quote_string })|({ shared.double_quote_string_with_escapes }))'
+    make_escape = r'\\[#"\']'
+    make_punctuation = r'[~\\`\[\](){}<>.,:;|%$^@&?!+*/=-]'
+    make_comment = r'(?<!\\)#(\\\s*\n|[^\n])*\n'
+
+    rules = [
+        (shared.whitespace, TokenType.WHITESPACE),
+        (make_escape, TokenType.PUNCTUATION),
+        (make_comment, TokenType.COMMENT),
+        (make_string, TokenType.STRING),
+        (make_identifier, TokenType.IDENTIFIER),
+        (make_minor_identifier, TokenType.SPECIAL),
+        (make_punctuation, TokenType.PUNCTUATION),
+    ]
+
+    def __init__(self, code):
+        self.code = code
+
+    def lex(self):
+        return simple_lexer(self.rules, self.code)
 
