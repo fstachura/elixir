@@ -31,7 +31,7 @@ import elixir.lib as lib
 from elixir.lib import script, scriptLines
 import elixir.data as data
 from elixir.data import PathList
-from elixir.lexers import get_lexer
+from elixir.project_utils import get_lexer
 from find_compatible_dts import FindCompatibleDTS
 
 verbose = False
@@ -307,7 +307,7 @@ class UpdateRefs(Thread):
             family = lib.getFileFamily(filename)
             if family == None: continue
 
-            lexer = get_lexer(filename)
+            lexer = get_lexer(filename, project)
             if lexer is None:
                 continue
 
