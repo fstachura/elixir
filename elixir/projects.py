@@ -65,7 +65,6 @@ projects = {
             r'/arch/mips/.*\.s': (GasLexer, {"arch": "mips"}),
             r'/arch/openrisc/.*\.s': (GasLexer, {"arch": "openrisc"}),
             r'/arch/parisc/.*\.s': (GasLexer, {"arch": "parisc"}),
-            r'/arch/riscv/.*\.s': (GasLexer, {"arch": "riscv"}),
             r'/arch/s390/.*\.s': (GasLexer, {"arch": "s390"}),
             r'/arch/sh/.*\.s': (GasLexer, {"arch": "sh"}),
             r'/arch/sparc/.*\.s': (GasLexer, {"arch": "sparc"}),
