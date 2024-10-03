@@ -1273,16 +1273,13 @@ class GasLexerTest(LexerTest):
 
     def test_comments_m68k(self):
         self.lex(r"""
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-license comment
-
-license continued
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # comment 1
 #comment 2
     clrl d1 | comment 3
     clrl d0 |comment 4
 | comment 4
+
+    clrl d2 # comment 3
 
 #if defined(C1) || !defined(C2)
 	addql #4,%sp
@@ -1293,7 +1290,46 @@ label:
 # endif
 
 #define macro(x) inst &IDENT,%pc@(ident); inst x
-""", [], lexer_options={"arch": "m68k"})
+""", [
+        ['COMMENT', '# comment 1\n'],
+        ['COMMENT', '#comment 2\n'],
+        ['IDENTIFIER', 'clrl'],
+        ['IDENTIFIER', 'd1'],
+        ['COMMENT', '| comment 3\n'],
+        ['IDENTIFIER', 'clrl'],
+        ['IDENTIFIER', 'd0'],
+        ['COMMENT', '|comment 4\n'],
+        ['COMMENT', '| comment 4\n'],
+        ['IDENTIFIER', 'clrl'],
+        ['IDENTIFIER', 'd2'],
+        ['COMMENT', '# comment 3\n'],
+        ['SPECIAL', '#if'],
+        ['IDENTIFIER', 'defined'],
+        ['IDENTIFIER', 'C1'],
+        ['IDENTIFIER', 'defined'],
+        ['IDENTIFIER', 'C2'],
+        ['IDENTIFIER', 'addql'],
+        ['IDENTIFIER', 'sp'],
+        ['IDENTIFIER', 'label'],
+        ['IDENTIFIER', 'movel'],
+        ['IDENTIFIER', 'IDNENT'],
+        ['IDENTIFIER', 'sp'],
+        ['IDENTIFIER', 'IDENT'],
+        ['COMMENT', '| comment 5\n'],
+        ['COMMENT', '// /linux/v6.10.7/source/arch/m68k/ifpsp060/src/fplsp.S\n'],
+        ['IDENTIFIER', 'test'],
+        ['COMMENT', '# comment 6\n'],
+        ['SPECIAL', '# endif'],
+        ['SPECIAL', '#define'],
+        ['IDENTIFIER', 'macro'],
+        ['IDENTIFIER', 'x'],
+        ['IDENTIFIER', 'inst'],
+        ['IDENTIFIER', 'IDENT'],
+        ['IDENTIFIER', 'pc'],
+        ['IDENTIFIER', 'ident'],
+        ['IDENTIFIER', 'inst'],
+        ['IDENTIFIER', 'x'],
+    ], lexer_options={"arch": "m68k"})
 
     def test_comments_sparc(self):
         self.lex(r"""
@@ -1453,14 +1489,12 @@ test:
         ['PUNCTUATION', '('],
         ['IDENTIFIER', 'IDENT1'],
         ['PUNCTUATION', ')'],
-        ['PUNCTUATION', '|'],
-        ['PUNCTUATION', '|'],
+        ['PUNCTUATION', '||'],
         ['IDENTIFIER', 'defined'],
         ['PUNCTUATION', '('],
         ['IDENTIFIER', 'IDENT2'],
         ['PUNCTUATION', ')'],
-        ['PUNCTUATION', '#'],
-        ['IDENTIFIER', 'endif'],
+        ['SPECIAL', '#endif'],
     ], self.default_filtered_tokens + ("PUNCTUATION", "NUMBER"))
 
     def test_comments_preproc(self):
@@ -1492,8 +1526,24 @@ test:
         21321432432.234324324E-14
 .float 0f-123.123213e+13
 .float 0e-123.123213e+13
-""", [], self.default_filtered_tokens + ("NUMBER",))
-
-    # preproc, comments and hash literals
+""", [
+        ['IDENTIFIER', 'byte'],
+        ['NUMBER', '12'],
+        ['NUMBER', '0b1010'],
+        ['NUMBER', '0B1010'],
+        ['NUMBER', '0x34'],
+        ['NUMBER', '0123'],
+        ['NUMBER', '0X45'],
+        ['STRING', "'a"],
+        ['STRING', "'\\b"],
+        ['IDENTIFIER', 'ascii'],
+        ['STRING', '"asdsad\\"zxczc"'],
+        ['IDENTIFIER', 'float'],
+        ['NUMBER', '0f-12321321030982394324\\\n        21321432432.234324324E-14'],
+        ['IDENTIFIER', 'float'],
+        ['NUMBER', '0f-123.123213e+13'],
+        ['IDENTIFIER', 'float'],
+        ['NUMBER', '0e-123.123213e+13'],
+    ], self.default_filtered_tokens + ("NUMBER",))
 
 

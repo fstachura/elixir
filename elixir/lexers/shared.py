@@ -16,12 +16,12 @@ common_hexidecimal_integer = r'0[xX][0-9a-fA-F][0-9a-fA-F\']*'
 common_octal_integer = r'0[0-7][0-7\']*'
 common_binary_integer = r'0[bB][01][01\']*'
 
-c_preproc_angled_include = r'#\s*include\s*(<.*?>|".*?")'
+c_preproc_include = r'#\s*include\s*(<.*?>|".*?")'
 # match warning and error directives with the error string
 c_preproc_warning_and_error = r'#\s*(warning|error)\s(\\\s*\n|[^\n])*\n'
 # match other preprocessor directives, but don't consume the whole line
 c_preproc_other = r'#\s*[a-z]+'
-c_preproc_ignore = regex_or(c_preproc_angled_include, c_preproc_warning_and_error, c_preproc_other)
+c_preproc_ignore = regex_or(c_preproc_include, c_preproc_warning_and_error, c_preproc_other)
 
 # \, any amount of whitespace, newline or any character that's not backslash newline or a quote, any escaped character
 double_quote_string_with_escapes = r'"(\\\s*\n|[^\\"\n]|\\(.|\s))*?"'

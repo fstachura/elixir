@@ -270,7 +270,7 @@ class GasLexer:
     # /musl/v1.2.5/source/src/string/aarch64/memcpy.S#L92
     gasm_identifier = r'[a-zA-Z0-9_][a-zA-Z0-9_$.]*'
 
-    gasm_flonum = r'0?[a-zA-Z][+-]?[0-9]*\.[0-9]*([eE][+-]?[0-9]+)?'
+    gasm_flonum = r'0?[a-zA-Z][+-]?([0-9]|\\s*\n\s*)*\.([0-9]|\\s*\n\s*)*([eE][+-]?[0-9]+)?'
     gasm_number = regex_or(gasm_flonum, shared.common_hexidecimal_integer, shared.common_binary_integer,
                            shared.common_decimal_integer)
 
@@ -289,9 +289,9 @@ class GasLexer:
         'mips': (r'#\s',),
         'alpha': (r'#\s',),
         'csky': (r'#\s',),
-        # BUT double pipe in macros is an operator... and # not in the first line in 
+        # BUT double pipe in macros is an operator... and # not in the first line in
         # /linux/v6.10.7/source/arch/m68k/ifpsp060/src/fplsp.S
-        'm68k': ('|', r'#\s'), 
+        'm68k': ('|', '^#', r'#\s'),
         'arc': ('# ', ';'),
 
         # https://sourceware.org/binutils/docs/as.html#HPPA-Syntax
@@ -317,15 +317,16 @@ class GasLexer:
     }
 
     gasm_punctuation = r'[.,\[\]()<>{}%&+*!|@#$;:^/\\=~-]'
-    gasm_preprocessor = r'#[ \t]*(define|ifdef|ifndef|undef|if|else|elif)'
+    # TODO make sure all relevant directives are listed here
+    gasm_preprocessor = r'#[ \t]*(define|ifdef|ifndef|undef|if|else|elif|endif)'
 
     rules_before_comments = [
         (shared.whitespace, TokenType.WHITESPACE),
         # don't interpret macro concatenate as a comment
         ('##', TokenType.PUNCTUATION),
-        # don't interpret pipe as a comment
-        ('||', TokenType.PUNCTUATION),
-        (FirstInLine(shared.c_preproc_ignore), TokenType.SPECIAL),
+        # don't interpret or as a comment
+        ('\|\|', TokenType.PUNCTUATION),
+        (FirstInLine(regex_or(shared.c_preproc_include, shared.c_preproc_warning_and_error)), TokenType.SPECIAL),
         (FirstInLine(gasm_preprocessor), TokenType.SPECIAL),
         (shared.common_slash_comment, TokenType.COMMENT),
     ]
@@ -344,15 +345,18 @@ class GasLexer:
     def get_arch_rules(self):
         result = []
 
+        regex_chars = '*?+^.$\\[]|()'
+        add_slash = lambda ch: '\\' + ch if ch in regex_chars else ch
+
         for comment_char in self.comment_chars:
             if comment_char[0] == '^':
                 result.append((
-                    FirstInLine(comment_char[1] + shared.singleline_comment_with_escapes_base),
+                    FirstInLine(add_slash(comment_char[1]) + shared.singleline_comment_with_escapes_base),
                     TokenType.COMMENT
                 ))
             else:
                 result.append((
-                    comment_char + shared.singleline_comment_with_escapes_base, 
+                    add_slash(comment_char) + shared.singleline_comment_with_escapes_base,
                     TokenType.COMMENT)
                 )
 
