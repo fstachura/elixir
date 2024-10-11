@@ -19,6 +19,7 @@
 #  along with Elixir.  If not, see <http://www.gnu.org/licenses/>.
 
 import subprocess, os
+import msgpack._cmsgpack
 
 CURRENT_DIR = os.path.abspath(os.path.dirname(os.path.abspath(__file__)) + '/..')
 
@@ -179,9 +180,9 @@ def isIdent(bstr):
 
 def autoBytes(arg):
     if type(arg) is str:
-        arg = arg.encode()
+        arg = msgpack.dumps(arg)
     elif type(arg) is int:
-        arg = str(arg).encode()
+        arg = msgpack.dumps(arg)
     return arg
 
 def getDataDir():
