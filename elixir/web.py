@@ -19,6 +19,7 @@
 #  along with Elixir.  If not, see <http://www.gnu.org/licenses/>.
 
 import logging
+import cProfile
 import os
 import sys
 import re
@@ -30,6 +31,7 @@ from re import search, sub
 from urllib import parse
 import falcon
 import jinja2
+import random
 
 from .lib import validFamily
 from .query import Query, SymbolInstance
@@ -726,7 +728,7 @@ Config = namedtuple('Config', 'project_dir, version_string, repo_link')
 
 # Basic information about handled request - current Elixir configuration, configured Jinja environment
 # and logger
-RequestContext = namedtuple('RequestContext', 'config, jinja_env, logger, versions_cache, versions_cache_lock')
+RequestContext = namedtuple('RequestContext', 'config, jinja_env, logger, versions_cache, versions_cache_lock, profiler, request_start')
 
 def get_jinja_env():
     script_dir = os.path.dirname(os.path.realpath(__file__))
@@ -751,13 +753,28 @@ class RequestContextMiddleware:
         self.versions_cache_lock = threading.Lock()
 
     def process_request(self, req, resp):
+        if random.randint(0, 10) == 5:
+            pr = cProfile.Profile()
+            pr.enable()
+        else:
+            pr = None
+
         req.context = RequestContext(
             Config(req.env['LXR_PROJ_DIR'], ELIXIR_VERSION_STRING, ELIXIR_REPO_LINK),
             self.jinja_env,
             logging.getLogger(__name__),
             self.versions_cache,
             self.versions_cache_lock,
+            pr,
+            time.time()
         )
+
+    def process_response(self, req, resp, res, suc):
+        if req.context.profiler:
+            req.context.profiler.disable()
+            if time.time()-req.context.request_start >= 3:
+                filename = parse.quote_plus(req.path) + str(int(time.time()))
+                req.context.profiler.dump_stats("/tmp/" + filename[:255])
 
 # Serialies caught exceptions to JSON or HTML
 # See https://falcon.readthedocs.io/en/stable/api/app.html#falcon.App.set_error_serializer
