@@ -14,6 +14,8 @@ from elixir.lib import (
     isIdent,
     script,
     scriptLines,
+    always_indexed_tokens,
+    always_indexed_prefixes,
 )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
@@ -58,13 +60,19 @@ def add_refs(db: DB, def_cache: DefCache, refs: RefsDict):
     for ident, idx_to_lines in refs.items():
         # Skip reference if definition was not collected in this tag
         deflist = def_cache.get(ident)
-        if deflist is None:
+        always_indexed = ident in always_indexed_tokens
+        valid_prefix = any(ident.startswith(pref) for pref in always_indexed_prefixes)
+        if deflist is None and not (always_indexed or valid_prefix):
             continue
 
         def deflist_exists(idx, n):
+            if deflist is None:
+                return False
+
             for didx, dn in deflist:
                 if didx == idx and dn == n:
                     return True
+
             return False
 
         obj = db.refs.get(ident)
