@@ -1,5 +1,5 @@
 from concurrent.futures import ProcessPoolExecutor, wait
-from multiprocessing import Manager
+from multiprocessing import Manager, cpu_count
 import logging
 from threading import Lock
 
@@ -327,12 +327,14 @@ def split_into_chunks(list, chunk_size):
     return [list[i:i+chunk_size] for i in range(0, len(list), chunk_size)]
 
 # Update a single version
-def update_version(db, tag, pool, manager, chunk_size, dts_comp_support):
+def update_version(db, tag, pool, manager, dts_comp_support):
     state = build_partial_state(db, tag)
 
     # Collect blobs to process and split list of blobs into chunks
     idxes = [(idx, hash, filename) for (idx, (hash, filename)) in state.idx_to_hash_and_filename.items()]
-    chunks = split_into_chunks(idxes, chunk_size)
+    chunksize = int(len(idxes) / cpu_count())
+    chunksize = min(max(1, chunksize), 400)
+    chunks = split_into_chunks(idxes, chunksize)
 
     def after_all_defs_done():
         # NOTE: defs database cannot be written to from now on. This is very important - process pool is used,
@@ -425,7 +427,7 @@ if __name__ == "__main__":
 
             if not db.vers.exists(tag):
                 print("updating tag", tag)
-                update_version(db, tag, pool, manager, 1000, dts_comp_support)
+                update_version(db, tag, pool, manager, dts_comp_support)
                 db.close()
                 db = None
 
