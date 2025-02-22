@@ -15,8 +15,9 @@ RUN pip wheel berkeleydb==18.1.10
 
 WORKDIR /build-ctags/
 
-RUN git clone --branch v6.1.0 --depth 1 https://github.com/universal-ctags/ctags.git
+RUN git clone https://github.com/universal-ctags/ctags.git
 WORKDIR ctags
+RUN git checkout e7db33b
 RUN ./autogen.sh && ./configure && make -j $(nproc)
 
 FROM debian:bookworm
