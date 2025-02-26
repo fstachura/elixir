@@ -22,6 +22,7 @@ from .lib import script, scriptLines, decode
 from . import lib
 from . import data
 import os
+import sys
 from collections import OrderedDict
 from urllib import parse
 
@@ -175,6 +176,9 @@ class Query:
     def get_file_type(self, version, path):
         return decode(self.script('get-type', version, path)).strip()
 
+    def get_blob_id(self, version, path):
+        return decode(self.script('get-blob-id', version, path)).strip()
+
     # Returns identifier search results
     def search_ident(self, version, ident, family):
         # DT bindings compatible strings are handled differently
@@ -194,6 +198,25 @@ class Query:
 
         # return the oldest tag, even if it does not exist in the database
         return sorted_tags[-1].decode()
+
+    def get_diff(self, version, version_other, path):
+        data = decode(self.script('get-diff', version, version_other, path)).split('\n')
+        result = []
+        for line in data:
+            if len(line) == 0:
+                continue
+            elif line[0] == '+':
+                line_num_left, line_num_right, changes = line[1:].split(':')
+                result.append(('+', int(line_num_left), int(line_num_right), int(changes)))
+            elif line[0] == '-':
+                line_num_left, line_num_right, changes = line[1:].split(':')
+                result.append(('-', int(line_num_left), int(line_num_right), int(changes)))
+            elif line[0] == '=':
+                line_num, changes, other_line_num, other_changes = line[1:].split(':')
+                result.append(('=', int(line_num), int(changes), int(other_line_num), int(other_changes)))
+            else:
+                raise Exception("Invalid line in get-diff: " + line)
+        return result
 
     def get_file_raw(self, version, path):
         return decode(self.script('get-file', version, path))
