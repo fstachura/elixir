@@ -8,6 +8,7 @@ import falcon
 import jinja2
 
 from .lib import validFamily, run_cmd
+from pygments.formatters import HtmlFormatter
 
 ELIXIR_DIR = os.path.normpath(os.path.dirname(__file__) + "/../")
 ELIXIR_REPO_LINK = 'https://github.com/bootlin/elixir/'
@@ -80,4 +81,83 @@ class IdentConverter(falcon.routing.BaseConverter):
     def convert(self, value: str) -> str|None:
         value = parse.unquote(value)
         return validate_ident(value)
+
+class DiffFormater(HtmlFormatter):
+    def __init__(self, diff, left: bool, *args, **kwargs):
+        self.diff = diff
+        self.left = left
+        super().__init__(*args[2:], **kwargs)
+
+    def get_next_diff_line(self, diff_num, next_diff_line):
+        next_diff = self.diff[diff_num] if len(self.diff) > diff_num else None
+
+        if next_diff is not None:
+            if self.left and (next_diff[0] == '-' or next_diff[0] == '+'):
+                next_diff_line = next_diff[1]
+            elif next_diff[0] == '-' or next_diff[0] == '+':
+                next_diff_line = next_diff[2]
+            elif self.left and next_diff[0] == '=':
+                next_diff_line = next_diff[1]
+            elif next_diff[0] == '=':
+                next_diff_line = next_diff[3]
+            else:
+                raise Exception("invlaid next diff mode")
+
+        return next_diff, diff_num+1, next_diff_line
+
+    def mark_lines(self, source, num, css_class):
+        i = 0
+        while i < num:
+            try:
+                t, line = next(source)
+            except StopIteration:
+                break
+            if t == 1:
+                yield t, f'<span class="{css_class}">{line}</span>'
+                i += 1
+            else:
+                yield t, line
+
+    def yield_empty(self, num):
+        for _ in range(num):
+            yield 0, '<span class="diff-line">&nbsp;\n</span>'
+
+    def wrap_diff(self, source):
+        next_diff, diff_num, next_diff_line = self.get_next_diff_line(0, None)
+
+        linenum = 1
+
+        while True:
+            try:
+                line = next(source)
+            except StopIteration:
+                break
+
+            yield line
+
+            if linenum == next_diff_line:
+                if next_diff is not None:
+                    if self.left and next_diff[0] == '+':
+                        yield from self.yield_empty(next_diff[3])
+                    elif next_diff[0] == '+':
+                        yield from self.mark_lines(source, next_diff[3], 'line-added')
+                        linenum += next_diff[3]
+                    elif self.left and next_diff[0] == '-':
+                        yield from self.mark_lines(source, next_diff[3], 'line-removed')
+                        linenum += next_diff[3]
+                    elif next_diff[0] == '-':
+                        yield from self.yield_empty(next_diff[3])
+                    elif next_diff[0] == '=':
+                        total = max(next_diff[2], next_diff[4])
+                        to_print = next_diff[2] if self.left else next_diff[4]
+                        yield from self.mark_lines(source, to_print, 'line-removed' if self.left else 'line-added')
+                        yield from self.yield_empty(total-to_print)
+                        linenum += to_print
+
+                next_diff, diff_num, next_diff_line = self.get_next_diff_line(diff_num, next_diff_line)
+
+            linenum += 1
+
+    def wrap(self, source):
+        return super().wrap(self.wrap_diff(source))
 
