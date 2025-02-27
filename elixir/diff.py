@@ -1,5 +1,8 @@
+import os
 from typing import Generator, Optional, Tuple, List
 from pygments.formatters import HtmlFormatter
+from .query import Query
+from .web_utils import DirectoryEntry
 
 from elixir.query import DiffEntry
 
@@ -151,4 +154,68 @@ def format_diff(filename: str, diff, code: str, code_other: str) -> Tuple[str, s
     )
 
     return pygments.highlight(code, lexer, formatter), pygments.highlight(code_other, lexer, formatter_other)
+
+# Returns a list of DirectoryEntry objects with information about files in a directory
+# base_url: file URLs will be created by appending file path to this URL. It shouldn't end with a slash
+# tag: requested repository tag
+# tag_other: tag to diff with
+# path: path to the directory in the repository
+def diff_directory_entries(q: Query, base_url, tag: str, tag_other: str, path: str) -> list[DirectoryEntry]:
+    dir_entries = []
+
+    names, names_other = {}, {}
+    for line in q.get_dir_contents(tag, path):
+        n = line.split(' ')
+        names[n[1]] = n
+    for line in q.get_dir_contents(tag_other, path):
+        n = line.split(' ')
+        names_other[n[1]] = n
+
+    def dir_sort(name):
+        if name in names and names[name][0] == 'tree':
+            return (1, name)
+        elif name in names_other and names_other[name][0] == 'tree':
+            return (1, name)
+        else:
+            return (2, name)
+
+    all_names = set(names.keys())
+    all_names = all_names.union(names_other.keys())
+    all_names = sorted(all_names, key=dir_sort)
+
+    for name in all_names:
+        data = names.get(name)
+        data_other = names_other.get(name)
+
+        diff_cls = None
+        if data is None and data_other is not None:
+            type, name, size, perm, blob_id = data_other
+            diff_cls = 'added'
+        elif data_other is None and data is not None:
+            type, name, size, perm, blob_id = data
+            diff_cls = 'removed'
+        elif data is not None and data_other is not None:
+            type_old, name, _, _, blob_id = data
+            type, _, size, perm, blob_id_other = data_other
+            if blob_id != blob_id_other or type_old != type:
+                diff_cls = 'changed'
+        else:
+            raise Exception("name does not exist " + name)
+
+        file_path = f"{ path }/{ name }"
+
+        if type == 'tree':
+            dir_entries.append(DirectoryEntry('tree', name, file_path, f"{ base_url }{ file_path }", None, diff_cls))
+        elif type == 'blob':
+            # 120000 permission means it's a symlink
+            if perm == '120000':
+                dir_path = path if path.endswith('/') else path + '/'
+                link_contents = q.get_file_raw(tag, file_path)
+                link_target_path = os.path.abspath(dir_path + link_contents)
+
+                dir_entries.append(DirectoryEntry('symlink', name, link_target_path, f"{ base_url }{ link_target_path }", size, diff_cls))
+            else:
+                dir_entries.append(DirectoryEntry('blob', name, file_path, f"{ base_url }{ file_path }", size, diff_cls))
+
+    return dir_entries
 
