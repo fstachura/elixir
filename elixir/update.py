@@ -1,9 +1,9 @@
 from concurrent.futures import ProcessPoolExecutor, wait
 from multiprocessing import Manager, cpu_count
+from multiprocessing.pool import Pool
 import logging
-from threading import Lock
 
-from elixir.lib import script, scriptLines, getFileFamily, isIdent, getDataDir
+from elixir.lib import script, scriptLines, getFileFamily, isIdent, getDataDir, compatibleFamily, compatibleMacro
 from elixir.data import PathList, DefList, RefList, DB, BsdDB
 
 from find_compatible_dts import FindCompatibleDTS
@@ -16,12 +16,6 @@ class UpdatePartialState:
         self.idx_to_hash_and_filename = idx_to_hash_and_filename
         self.hash_to_idx = hash_to_idx
 
-        self.defs_lock = Lock()
-        self.refs_lock = Lock()
-        self.docs_lock = Lock()
-        self.comps_lock = Lock()
-        self.comps_docs_lock = Lock()
-
     def get_idx_from_hash(self, hash):
         if hash in self.hash_to_idx:
             return self.hash_to_idx[hash]
@@ -30,46 +24,53 @@ class UpdatePartialState:
 
     # Add definitions to database
     def add_defs(self, defs):
-        with self.defs_lock:
-            for ident, occ_list in defs.items():
-                if self.db.defs.exists(ident):
-                    obj = self.db.defs.get(ident)
-                else:
-                    obj = DefList()
+        for ident, occ_list in defs.items():
+            if self.db.defs.exists(ident):
+                obj = self.db.defs.get(ident)
+            else:
+                obj = DefList()
 
-                for (idx, type, line, family) in occ_list:
-                    obj.append(idx, type, line, family)
+            for (idx, type, line, family) in occ_list:
+                obj.append(idx, type, line, family)
 
-                self.db.defs.put(ident, obj)
+            self.db.defs.put(ident, obj)
 
     # Add references to database
     def add_refs(self, refs):
-        with self.refs_lock:
-            for ident, idx_to_lines in refs.items():
-                obj = self.db.refs.get(ident)
-                if obj is None:
-                    obj = RefList()
+        for ident, idx_to_lines in refs.items():
+            deflist = self.db.defs.get(ident)
+            if not deflist:
+                continue
 
-                for (idx, family), lines in idx_to_lines.items():
+            obj = self.db.refs.get(ident)
+            if obj is None:
+                obj = RefList()
+
+            for (idx, family), lines in idx_to_lines.items():
+                lines = [n for n in lines if not deflist.exists(str(idx).encode(), n)]
+
+                if len(lines) != 0:
                     lines_str = ','.join((str(n) for n in lines))
                     obj.append(idx, lines_str, family)
 
-                self.db.refs.put(ident, obj)
+            self.db.refs.put(ident, obj)
 
     # Add documentation references to database
     def add_docs(self, idx, family, docs):
-        with self.docs_lock:
-            self.add_to_reflist(self.db.docs, idx, family, docs)
+        self.add_to_reflist(self.db.docs, idx, family, docs)
 
     # Add compatible references to database
     def add_comps(self, idx, family, comps):
-        with self.comps_lock:
-            self.add_to_reflist(self.db.comps, idx, family, comps)
+        self.add_to_reflist(self.db.comps, idx, family, comps)
 
     # Add compatible docs to database
     def add_comps_docs(self, idx, family, comps_docs):
-        with self.comps_docs_lock:
-            self.add_to_reflist(self.db.comps_docs, idx, family, comps_docs)
+        comps_result = {}
+        for ident, v in comps_docs.items():
+            if self.db.comps.exists(ident):
+                comps_result[ident] = v
+
+        self.add_to_reflist(self.db.comps_docs, idx, family, comps_result)
 
     # Add data to database file that uses reflist schema
     def add_to_reflist(self, db_file, idx, family, to_add):
@@ -82,6 +83,14 @@ class UpdatePartialState:
             lines_str = ','.join((str(n) for n in lines))
             obj.append(idx, lines_str, family)
             db_file.put(ident, obj)
+
+    def generate_defs_caches(self):
+        for key in self.db.defs.get_keys():
+            value = self.db.defs.get(key)
+            for family in ['C', 'K', 'D', 'M']:
+                if (compatibleFamily(value.get_families(), family) or
+                            compatibleMacro(value.get_macros(), family)):
+                    self.db.defs_cache[family].put(key, b'')
 
 
 # NOTE: not thread safe, has to be ran before the actual job is started
@@ -141,13 +150,15 @@ def apply_partial_state(state: UpdatePartialState):
         obj.append(idx, path)
 
     state.db.vers.put(state.tag, obj, sync=True)
-
+    state.generate_defs_caches()
 
 # Get definitions for a file
-def get_defs(idx, hash, filename, defs):
+def get_defs(file_id):
+    idx, hash, filename = file_id
+    defs = {}
     family = getFileFamily(filename)
     if family in [None, 'M']:
-        return
+        return {}
 
     lines = scriptLines('parse-defs', hash, filename, family)
 
@@ -163,11 +174,10 @@ def get_defs(idx, hash, filename, defs):
     return defs
 
 
-# NOTE: it is assumed that update_refs and update_defs are not running
-# concurrently. hence, defs are not locked
-# defs database MUSNT be updated while get_refs is running
 # Get references for a file
-def get_refs(idx, hash, filename, defs, refs):
+def get_refs(file_id):
+    idx, hash, filename = file_id
+    refs = {}
     family = getFileFamily(filename)
     if family is None:
         return
@@ -183,18 +193,16 @@ def get_refs(idx, hash, filename, defs, refs):
         even = not even
         if even:
             tok = prefix + tok
-            deflist = defs.get(tok)
 
-            if deflist and not deflist.exists(str(idx).encode(), line_num):
-                # We only index CONFIG_??? in makefiles
-                if (family != 'M' or tok.startswith(b'CONFIG_')):
-                    if tok not in refs:
-                        refs[tok] = {}
+            # We only index CONFIG_??? in makefiles
+            if (family != 'M' or tok.startswith(b'CONFIG_')):
+                if tok not in refs:
+                    refs[tok] = {}
 
-                    if (idx, family) not in refs[tok]:
-                        refs[tok][(idx, family)] = []
+                if (idx, family) not in refs[tok]:
+                    refs[tok][(idx, family)] = []
 
-                    refs[tok][(idx, family)].append(line_num)
+                refs[tok][(idx, family)].append(line_num)
 
         else:
             line_num += tok.count(b'\1')
@@ -215,7 +223,8 @@ def collect_get_blob_output(lines):
     return results
 
 # Get docs for a single file
-def get_docs(idx, hash, filename):
+def get_docs(file_id):
+    idx, hash, filename = file_id
     family = getFileFamily(filename)
     if family in [None, 'M']: return
 
@@ -225,7 +234,8 @@ def get_docs(idx, hash, filename):
     return (idx, family, docs)
 
 # Get compatible references for a single file
-def get_comps(idx, hash, filename):
+def get_comps(file_id):
+    idx, hash, filename = file_id
     family = getFileFamily(filename)
     if family in [None, 'K', 'M']: return
 
@@ -237,7 +247,8 @@ def get_comps(idx, hash, filename):
 
 # Get compatible documentation references for a single file
 # NOTE: assumes comps is not running concurrently
-def get_comps_docs(idx, hash, _, comps):
+def get_comps_docs(file_id):
+    idx, hash, _ = file_id
     family = 'B'
 
     compatibles_parser = FindCompatibleDTS()
@@ -246,171 +257,41 @@ def get_comps_docs(idx, hash, _, comps):
     for l in lines:
         ident, line = l.split(' ')
 
-        if comps.exists(ident):
-            if ident not in comps_docs:
-                comps_docs[ident] = []
-            comps_docs[ident].append(int(line))
+        if ident not in comps_docs:
+            comps_docs[ident] = []
+        comps_docs[ident].append(int(line))
 
     return (idx, family, comps_docs)
 
-def batch(job):
-    def f(chunk, **kwargs):
-        return [job(*args, **kwargs) for args in chunk]
-    return f
-
-# NOTE: some of the following functions are kind of redundant, and could sometimes be
-# higher-order functions, but that's not supported by multiprocessing
-
-def batch_defs(chunk):
-    defs = {}
-    for ch in chunk:
-        get_defs(*ch, defs=defs)
-    return defs
-
-# Handle defs task results
-def handle_defs_results(state):
-    def f(future):
-        try:
-            result = future.result()
-            if result is not None:
-                state.add_defs(result)
-        except Exception:
-            logging.exception(f"handling future results for defs raised")
-    return f
-
-def batch_docs(*args, **kwargs): return batch(get_docs)(*args, **kwargs)
-def batch_comps(*args, **kwargs): return batch(get_comps)(*args, **kwargs)
-
-# Run references tasks on a chunk
-# NOTE: references can open definitions database in read-only mode, because
-# definitions job was finished
-def batch_refs(chunk, **kwargs):
-    defs = BsdDB(getDataDir() + '/definitions.db', True, DefList)
-    refs = {}
-    for args in chunk:
-        get_refs(*args, defs=defs, refs=refs, **kwargs)
-    defs.close()
-    return refs
-
-# Handle refs task results
-def handle_refs_results(state):
-    def f(future):
-        try:
-            result = future.result()
-            if result is not None:
-                state.add_refs(result)
-        except Exception:
-            logging.exception(f"handling future results for refs raised")
-    return f
-
-# Run comps_docs tasks on a chunk
-# NOTE: compatibledts database can be opened for the same reasons as in batch_refs
-def batch_comps_docs(chunk, **kwargs):
-    comps = BsdDB(getDataDir() + '/compatibledts.db', True, DefList)
-    result = [get_comps_docs(*args, comps=comps, **kwargs) for args in chunk]
-    comps.close()
-    return result
-
-def handle_batch_results(callback):
-    def f(future):
-        try:
-            results = future.result()
-            for result in results:
-                if result is not None:
-                    callback(*result)
-        except Exception:
-            logging.exception(f"handling future results for {callback.__name__} raised")
-    return f
-
-# Split list into sublist of chunk_size size
-def split_into_chunks(list, chunk_size):
-    return [list[i:i+chunk_size] for i in range(0, len(list), chunk_size)]
-
 # Update a single version
-def update_version(db, tag, pool, manager, dts_comp_support):
+def update_version(db, tag, pool, dts_comp_support):
     state = build_partial_state(db, tag)
 
     # Collect blobs to process and split list of blobs into chunks
     idxes = [(idx, hash, filename) for (idx, (hash, filename)) in state.idx_to_hash_and_filename.items()]
     chunksize = int(len(idxes) / cpu_count())
     chunksize = min(max(1, chunksize), 400)
-    chunks = split_into_chunks(idxes, chunksize)
 
-    def after_all_defs_done():
-        # NOTE: defs database cannot be written to from now on. This is very important - process pool is used,
-        # and bsddb cannot be shared between processes until/unless bsddb concurrent data store is implemented.
-        # Operations on closed databases raise exceptions that would in this case be indicative of a bug.
-        state.db.defs.sync()
-        state.db.defs.close()
-        print("defs db closed")
+    for result in pool.imap_unordered(get_defs, idxes, chunksize):
+        if result is not None:
+            state.add_defs(result)
 
-        # Start refs job
-        futures = [pool.submit(batch_refs, ch) for ch in chunks]
-        return ("refs", (futures, handle_refs_results(state), None))
-
-    def after_all_comps_done():
-        state.db.comps.sync()
-        state.db.comps.close()
-        print("comps db closed")
-
-        # Start comps_docs job
-        futures = [pool.submit(batch_comps_docs, ch) for ch in chunks]
-        return ("comps_docs", (futures, handle_batch_results(state.add_comps_docs), None))
-
-    # Used to track futures for jobs, what to do after a single future finishes,
-    # and after the whole job finishes
-    to_track = {
-        "defs": ([], handle_defs_results(state), after_all_defs_done),
-        "docs": ([], handle_batch_results(state.add_docs), None),
-    }
+    for result in pool.imap_unordered(get_docs, idxes, chunksize):
+        if result is not None:
+            state.add_docs(*result)
 
     if dts_comp_support:
-        to_track["comps"] = ([], handle_batch_results(state.add_comps), after_all_comps_done)
+        for result in pool.imap_unordered(get_comps, idxes, chunksize):
+            if result is not None:
+                state.add_comps(*result)
 
-    # Start initial jobs for all chunks
-    for ch in chunks:
-        to_track["defs"][0].append(pool.submit(batch_defs, ch))
-        to_track["docs"][0].append(pool.submit(batch_docs, ch))
+        for result in pool.imap_unordered(get_comps_docs, idxes, chunksize):
+            if result is not None:
+                state.add_comps_docs(*result)
 
-        if dts_comp_support:
-            to_track["comps"][0].append(pool.submit(batch_comps, ch))
-
-
-    # Used to track progress of jobs
-    total_lengths = {
-        k: (0, len(v[0])) for k, v in to_track.items()
-    }
-
-    # track job progress
-    while len(to_track) != 0:
-        new_to_track = {}
-
-        for name, (futures, after_single_done, after_all_done) in to_track.items():
-            new_futures = futures
-
-            if len(futures) != 0:
-                result = wait(futures, timeout=1)
-
-                if len(result.done) != 0:
-                    total_lengths[name] = (total_lengths[name][0] + len(result.done), total_lengths[name][1])
-                    print(name, f"progress: {int((total_lengths[name][0]/total_lengths[name][1])*100)}%")
-                    new_futures = [f for f in futures if f not in result.done]
-
-                    for f in result.done:
-                        if after_single_done is not None:
-                            after_single_done(f)
-
-                if len(new_futures) == 0:
-                    if after_all_done is not None:
-                        k, v = after_all_done()
-                        new_to_track[k] = v
-                        total_lengths[k] = (0, len(v[0]))
-                else:
-                    new_to_track[name] = (new_futures, after_single_done, after_all_done)
-            else:
-                new_to_track[name] = (new_futures, after_single_done, after_all_done)
-
-        to_track = new_to_track
+    for result in pool.imap_unordered(get_refs, idxes, chunksize):
+        if result is not None:
+            state.add_refs(result)
 
     print("update done, applying partial state")
     apply_partial_state(state)
@@ -419,15 +300,14 @@ if __name__ == "__main__":
     dts_comp_support = int(script('dts-comp'))
     db = None
 
-    manager = Manager()
-    with ProcessPoolExecutor() as pool:
+    with Pool() as pool:
         for tag in scriptLines('list-tags'):
             if db is None:
                 db = DB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=True)
 
             if not db.vers.exists(tag):
                 print("updating tag", tag)
-                update_version(db, tag, pool, manager, dts_comp_support)
+                update_version(db, tag, pool, dts_comp_support)
                 db.close()
                 db = None
 
