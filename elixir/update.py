@@ -272,26 +272,32 @@ def update_version(db, tag, pool, dts_comp_support):
     chunksize = int(len(idxes) / cpu_count())
     chunksize = min(max(1, chunksize), 400)
 
-    for result in pool.imap_unordered(get_defs, idxes, chunksize):
+    for result in pool.map(get_defs, idxes, chunksize):
         if result is not None:
             state.add_defs(result)
 
-    for result in pool.imap_unordered(get_docs, idxes, chunksize):
+    for result in pool.map(get_docs, idxes, chunksize):
         if result is not None:
             state.add_docs(*result)
 
     if dts_comp_support:
-        for result in pool.imap_unordered(get_comps, idxes, chunksize):
+        for result in pool.map(get_comps, idxes, chunksize):
+            print("adding dts to db")
             if result is not None:
                 state.add_comps(*result)
+            print("adding dts to db done")
 
-        for result in pool.imap_unordered(get_comps_docs, idxes, chunksize):
+        for result in pool.map(get_comps_docs, idxes, chunksize):
+            print("adding dts docs to db")
             if result is not None:
                 state.add_comps_docs(*result)
+            print("adding dts docs to db done")
 
-    for result in pool.imap_unordered(get_refs, idxes, chunksize):
+    for result in pool.map(get_refs, idxes, chunksize):
+        print("adding refs to db")
         if result is not None:
             state.add_refs(result)
+        print("adding refs to db done")
 
     print("update done, applying partial state")
     apply_partial_state(state)

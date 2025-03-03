@@ -20,6 +20,7 @@
 
 import berkeleydb
 import re
+from . import lib
 from .lib import autoBytes
 import os
 import os.path
