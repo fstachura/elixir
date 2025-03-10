@@ -154,10 +154,13 @@ class RefList:
         return self.data
 
 class BsdDB:
-    def __init__(self, filename, readonly, contentType, shared=False):
+    def __init__(self, filename, readonly, contentType, shared=False, cachesize=None):
         self.filename = filename
         self.db = berkeleydb.db.DB()
         flags = berkeleydb.db.DB_THREAD if shared else 0
+
+        if cachesize is not None:
+            self.db.set_cachesize(cachesize[0], cachesize[1])
 
         if readonly:
             flags |= berkeleydb.db.DB_RDONLY
@@ -201,7 +204,7 @@ class BsdDB:
         return self.db.stat()["nkeys"]
 
 class DB:
-    def __init__(self, dir, readonly=True, dtscomp=False, shared=False):
+    def __init__(self, dir, readonly=True, dtscomp=False, shared=False, cachesize=None):
         if os.path.isdir(dir):
             self.dir = dir
         else:
@@ -209,29 +212,29 @@ class DB:
 
         ro = readonly
 
-        self.vars = BsdDB(dir + '/variables.db', ro, lambda x: int(x.decode()), shared=shared)
+        self.vars = BsdDB(dir + '/variables.db', ro, lambda x: int(x.decode()), shared=shared, cachesize=cachesize)
             # Key-value store of basic information
-        self.blob = BsdDB(dir + '/blobs.db', ro, lambda x: int(x.decode()), shared=shared)
+        self.blob = BsdDB(dir + '/blobs.db', ro, lambda x: int(x.decode()), shared=shared, cachesize=cachesize)
             # Map hash to sequential integer serial number
-        self.hash = BsdDB(dir + '/hashes.db', ro, lambda x: x, shared=shared)
+        self.hash = BsdDB(dir + '/hashes.db', ro, lambda x: x, shared=shared, cachesize=cachesize)
             # Map serial number back to hash
-        self.file = BsdDB(dir + '/filenames.db', ro, lambda x: x.decode(), shared=shared)
+        self.file = BsdDB(dir + '/filenames.db', ro, lambda x: x.decode(), shared=shared, cachesize=cachesize)
             # Map serial number to filename
-        self.vers = BsdDB(dir + '/versions.db', ro, PathList, shared=shared)
-        self.defs = BsdDB(dir + '/definitions.db', ro, DefList, shared=shared)
+        self.vers = BsdDB(dir + '/versions.db', ro, PathList, shared=shared, cachesize=cachesize)
+        self.defs = BsdDB(dir + '/definitions.db', ro, DefList, shared=shared, cachesize=cachesize)
         self.defs_cache = {}
         NOOP = lambda x: x
-        self.defs_cache['C'] = BsdDB(dir + '/definitions-cache-C.db', ro, NOOP, shared=shared)
-        self.defs_cache['K'] = BsdDB(dir + '/definitions-cache-K.db', ro, NOOP, shared=shared)
-        self.defs_cache['D'] = BsdDB(dir + '/definitions-cache-D.db', ro, NOOP, shared=shared)
-        self.defs_cache['M'] = BsdDB(dir + '/definitions-cache-M.db', ro, NOOP, shared=shared)
+        self.defs_cache['C'] = BsdDB(dir + '/definitions-cache-C.db', ro, NOOP, shared=shared, cachesize=cachesize)
+        self.defs_cache['K'] = BsdDB(dir + '/definitions-cache-K.db', ro, NOOP, shared=shared, cachesize=cachesize)
+        self.defs_cache['D'] = BsdDB(dir + '/definitions-cache-D.db', ro, NOOP, shared=shared, cachesize=cachesize)
+        self.defs_cache['M'] = BsdDB(dir + '/definitions-cache-M.db', ro, NOOP, shared=shared, cachesize=cachesize)
         assert sorted(self.defs_cache.keys()) == sorted(lib.CACHED_DEFINITIONS_FAMILIES)
-        self.refs = BsdDB(dir + '/references.db', ro, RefList, shared=shared)
-        self.docs = BsdDB(dir + '/doccomments.db', ro, RefList, shared=shared)
+        self.refs = BsdDB(dir + '/references.db', ro, RefList, shared=shared, cachesize=cachesize)
+        self.docs = BsdDB(dir + '/doccomments.db', ro, RefList, shared=shared, cachesize=cachesize)
         self.dtscomp = dtscomp
         if dtscomp:
-            self.comps = BsdDB(dir + '/compatibledts.db', ro, RefList, shared=shared)
-            self.comps_docs = BsdDB(dir + '/compatibledts_docs.db', ro, RefList, shared=shared)
+            self.comps = BsdDB(dir + '/compatibledts.db', ro, RefList, shared=shared, cachesize=cachesize)
+            self.comps_docs = BsdDB(dir + '/compatibledts_docs.db', ro, RefList, shared=shared, cachesize=cachesize)
             # Use a RefList in case there are multiple doc comments for an identifier
 
     def close(self):

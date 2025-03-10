@@ -248,9 +248,9 @@ case $cmd in
         tags=`get_tags`
 
         if [ "$opt1" = '-h' ]; then
-            list_tags_h | grep ' v6.8$'
+            list_tags_h | grep ' v3.8$'
         else
-            list_tags | grep '^v6.8$'
+            list_tags | grep '^v3.8$'
         fi
         ;;
 

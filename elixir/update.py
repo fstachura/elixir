@@ -8,6 +8,9 @@ from elixir.data import PathList, DefList, RefList, DB, BsdDB
 
 from find_compatible_dts import FindCompatibleDTS
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
+logger = logging.getLogger(__name__)
+
 # Holds databases and update changes that are not commited yet
 class UpdatePartialState:
     def __init__(self, db, tag, idx_to_hash_and_filename, hash_to_idx):
@@ -15,6 +18,7 @@ class UpdatePartialState:
         self.tag = tag
         self.idx_to_hash_and_filename = idx_to_hash_and_filename
         self.hash_to_idx = hash_to_idx
+        self.def_idents = {}
 
     def get_idx_from_hash(self, hash):
         if hash in self.hash_to_idx:
@@ -30,24 +34,37 @@ class UpdatePartialState:
             else:
                 obj = DefList()
 
+            if ident in self.def_idents:
+                lines_list = self.def_idents[ident]
+            else:
+                lines_list = []
+                self.def_idents[ident] = lines_list
+
             for (idx, type, line, family) in occ_list:
                 obj.append(idx, type, line, family)
+                lines_list.append((idx, line))
 
             self.db.defs.put(ident, obj)
 
     # Add references to database
     def add_refs(self, refs):
         for ident, idx_to_lines in refs.items():
-            deflist = self.db.defs.get(ident)
-            if not deflist:
+            deflist = self.def_idents.get(ident)
+            if deflist is None:
                 continue
+
+            def deflist_exists(idx, n):
+                for didx, dn in deflist:
+                    if didx == idx and dn == n:
+                        return True
+                return False
 
             obj = self.db.refs.get(ident)
             if obj is None:
                 obj = RefList()
 
             for (idx, family), lines in idx_to_lines.items():
-                lines = [n for n in lines if not deflist.exists(str(idx).encode(), n)]
+                lines = [n for n in lines if not deflist_exists(str(idx).encode(), n)]
 
                 if len(lines) != 0:
                     lines_str = ','.join((str(n) for n in lines))
@@ -176,6 +193,7 @@ def get_defs(file_id):
 
 # Get references for a file
 def get_refs(file_id):
+    logger.info("get refs %s", file_id)
     idx, hash, filename = file_id
     refs = {}
     family = getFileFamily(filename)
@@ -207,6 +225,7 @@ def get_refs(file_id):
         else:
             line_num += tok.count(b'\1')
 
+    logger.info("get refs done %s", file_id)
     return refs
 
 # Collect compatible script output into reflist-schema compatible format
@@ -270,36 +289,42 @@ def update_version(db, tag, pool, dts_comp_support):
     # Collect blobs to process and split list of blobs into chunks
     idxes = [(idx, hash, filename) for (idx, (hash, filename)) in state.idx_to_hash_and_filename.items()]
     chunksize = int(len(idxes) / cpu_count())
-    chunksize = min(max(1, chunksize), 400)
+    chunksize = min(max(1, chunksize), 100)
 
-    for result in pool.map(get_defs, idxes, chunksize):
+    for result in pool.imap_unordered(get_defs, idxes, chunksize):
         if result is not None:
             state.add_defs(result)
 
-    for result in pool.map(get_docs, idxes, chunksize):
+    logger.info("defs done")
+
+    for result in pool.imap_unordered(get_docs, idxes, chunksize):
         if result is not None:
             state.add_docs(*result)
 
+    logger.info("docs done")
+
     if dts_comp_support:
-        for result in pool.map(get_comps, idxes, chunksize):
-            print("adding dts to db")
+        for result in pool.imap_unordered(get_comps, idxes, chunksize):
             if result is not None:
                 state.add_comps(*result)
-            print("adding dts to db done")
 
-        for result in pool.map(get_comps_docs, idxes, chunksize):
-            print("adding dts docs to db")
+        logger.info("dts comps done")
+
+        for result in pool.imap_unordered(get_comps_docs, idxes, chunksize):
             if result is not None:
                 state.add_comps_docs(*result)
-            print("adding dts docs to db done")
 
-    for result in pool.map(get_refs, idxes, chunksize):
-        print("adding refs to db")
+        logger.info("dts comps docs done")
+
+    for result in pool.imap_unordered(get_refs, idxes, chunksize):
+        logger.info("writing ref")
         if result is not None:
             state.add_refs(result)
-        print("adding refs to db done")
+        logger.info("writing ref done")
 
-    print("update done, applying partial state")
+    logger.info("refs done")
+
+    logger.info("update done, applying partial state")
     apply_partial_state(state)
 
 if __name__ == "__main__":
@@ -309,10 +334,10 @@ if __name__ == "__main__":
     with Pool() as pool:
         for tag in scriptLines('list-tags'):
             if db is None:
-                db = DB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=True)
+                db = DB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, cachesize=(2,0))
 
             if not db.vers.exists(tag):
-                print("updating tag", tag)
+                logger.info("updating tag %s", tag)
                 update_version(db, tag, pool, dts_comp_support)
                 db.close()
                 db = None
