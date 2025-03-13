@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+
 #  This file is part of Elixir, a source code cross-referencer.
 #
 #  Copyright (C) 2017--2020 Mikaël Bouillot <mikael.bouillot@bootlin.com>
@@ -28,6 +29,7 @@ import datetime
 from collections import OrderedDict, namedtuple
 from re import search, sub
 from typing import Any, Callable, NamedTuple, Optional, Tuple
+from difflib import SequenceMatcher
 from urllib import parse
 import falcon
 import jinja2
@@ -253,6 +255,11 @@ class SourceResource:
 
         query.close()
 
+# Returns base url of diff pages
+# project and version are assumed to be unquoted
+def get_diff_base_url(project: str, version: str, version_other: str) -> str:
+    return f'/{ parse.quote(project, safe="") }/{ parse.quote(version, safe="") }/diff/{ parse.quote(version_other, safe="") }'
+
 # Handles source URLs without a path, ex. '/u-boot/v2023.10/source'.
 # Note lack of trailing slash
 class SourceWithoutPathResource(SourceResource):
@@ -260,7 +267,7 @@ class SourceWithoutPathResource(SourceResource):
         return super().on_get(req, resp, project, version, '')
 
 class DiffResource:
-    def on_get(self, req, resp, project: str, version: str, version_other: str, path: str):
+    def on_get(self, req, resp, project: str, version: str, version_other: str, path: str = ''):
         project, version, query = validate_project_and_version(req.context, project, version)
         version_other = validate_version(parse.unquote(version_other))
         if version_other is None or version_other == 'latest':
@@ -686,7 +693,7 @@ def generate_diff(q: Query, project: str, version: str, version_other: str, path
 # path: path of the file, path to the target in case of symlinks
 # url: absolute URL of the file
 # size: int, file size in bytes, None for directories and symlinks
-DirectoryEntry = namedtuple('DirectoryEntry', 'type, name, path, url, size')
+DirectoryEntry = namedtuple('DirectoryEntry', 'type, name, path, url, size, cls')
 
 # Returns a list of DirectoryEntry objects with information about files in a directory
 # base_url: file URLs will be created by appending file path to this URL. It shouldn't end with a slash
@@ -697,11 +704,11 @@ def get_directory_entries(q: Query, base_url, tag: str, path: str) -> list[Direc
     lines = q.get_dir_contents(tag, path)
 
     for l in lines:
-        type, name, size, perm = l.split(' ')
+        type, name, size, perm, blob_id = l.split(' ')
         file_path = f"{ path }/{ name }"
 
         if type == 'tree':
-            dir_entries.append(DirectoryEntry('tree', name, file_path, f"{ base_url }{ file_path }", None))
+            dir_entries.append(DirectoryEntry('tree', name, file_path, f"{ base_url }{ file_path }", None, None))
         elif type == 'blob':
             # 120000 permission means it's a symlink
             if perm == '120000':
@@ -709,9 +716,9 @@ def get_directory_entries(q: Query, base_url, tag: str, path: str) -> list[Direc
                 link_contents = q.get_file_raw(tag, file_path)
                 link_target_path = os.path.abspath(dir_path + link_contents)
 
-                dir_entries.append(DirectoryEntry('symlink', name, link_target_path, f"{ base_url }{ link_target_path }", size))
+                dir_entries.append(DirectoryEntry('symlink', name, link_target_path, f"{ base_url }{ link_target_path }", size, None))
             else:
-                dir_entries.append(DirectoryEntry('blob', name, file_path, f"{ base_url }{ file_path }", size))
+                dir_entries.append(DirectoryEntry('blob', name, file_path, f"{ base_url }{ file_path }", size, None))
 
     return dir_entries
 
@@ -783,12 +790,76 @@ def generate_source_page(ctx: RequestContext, q: Query,
 
     return (status, template.render(data))
 
+# Returns a list of DirectoryEntry objects with information about files in a directory
+# base_url: file URLs will be created by appending file path to this URL. It shouldn't end with a slash
+# tag: requested repository tag
+# tag_other: tag to diff with
+# path: path to the directory in the repository
+def diff_directory_entries(q: Query, base_url, tag: str, tag_other: str, path: str) -> list[DirectoryEntry]:
+    dir_entries = []
+
+    names, names_other = {}, {}
+    for line in q.query('dir', tag, path):
+        n = line.split(' ')
+        names[n[1]] = n
+    for line in q.query('dir', tag_other, path):
+        n = line.split(' ')
+        names_other[n[1]] = n
+
+    def dir_sort(name):
+        if name in names and names[name][0] == 'tree':
+            return (1, name)
+        elif name in names_other and names_other[name][0] == 'tree':
+            return (1, name)
+        else:
+            return (2, name)
+
+    all_names = set(names.keys())
+    all_names.union(names_other.keys())
+    all_names = sorted(all_names, key=dir_sort)
+
+    for name in all_names:
+        data = names.get(name)
+        data_other = names_other.get(name)
+
+        cls = None
+        if data is None and data_other is not None:
+            type, name, size, perm, blob_id = data_other
+            cls = 'added'
+        elif data_other is None and data is not None:
+            type, name, size, perm, blob_id = data
+            cls = 'removed'
+        elif data is not None and data_other is not None:
+            type_old, name, _, _, blob_id = data
+            type, _, size, perm, blob_id_other = data_other
+            if blob_id != blob_id_other or type_old != type:
+                cls = 'changed'
+        else:
+            raise Exception("name does not exist " + name)
+
+        file_path = f"{ path }/{ name }"
+
+        if type == 'tree':
+            dir_entries.append(DirectoryEntry('tree', name, file_path, f"{ base_url }{ file_path }", None, cls))
+        elif type == 'blob':
+            # 120000 permission means it's a symlink
+            if perm == '120000':
+                dir_path = path if path.endswith('/') else path + '/'
+                link_contents = q.get_file_raw(tag, file_path)
+                link_target_path = os.path.abspath(dir_path + link_contents)
+
+                dir_entries.append(DirectoryEntry('symlink', name, link_target_path, f"{ base_url }{ link_target_path }", size, cls))
+            else:
+                dir_entries.append(DirectoryEntry('blob', name, file_path, f"{ base_url }{ file_path }", size, cls))
+
+    return dir_entries
+
 # Generates response (status code and optionally HTML) of the `diff` route
 def generate_diff_page(ctx: RequestContext, q: Query,
                        project: str, version: str, version_other: str, path: str) -> tuple[int, str]:
 
     status = falcon.HTTP_OK
-    source_base_url = get_source_base_url(project, version)
+    diff_base_url = get_diff_base_url(project, version, version_other)
 
     # Generate breadcrumbs
     path_split = path.split('/')[1:]
@@ -796,23 +867,38 @@ def generate_diff_page(ctx: RequestContext, q: Query,
     breadcrumb_links = []
     for p in path_split:
         path_temp += '/'+p
-        breadcrumb_links.append((p, f'{ source_base_url }{ path_temp }'))
+        breadcrumb_links.append((p, f'{ diff_base_url }{ path_temp }'))
 
     type = q.get_file_type(version, path)
     type_other = q.get_file_type(version, path)
 
-    if type != 'blob':
+    if type != type_other:
         raise ElixirProjectError('File not found', f'This file is not present in {version}.',
                                  status=falcon.HTTP_NOT_FOUND,
                                  query=q, project=project, version=version,
                                  extra_template_args={'breadcrumb_links': breadcrumb_links})
 
-    if type_other != 'blob':
-        raise ElixirProjectError('File not found', f'This file is not present in {version_other}.',
-                                 status=falcon.HTTP_NOT_FOUND,
-                                 query=q, project=project, version=version,
-                                 extra_template_args={'breadcrumb_links': breadcrumb_links})
+    elif type == 'tree':
+        back_path = os.path.dirname(path[:-1])
+        if back_path == '/':
+            back_path = ''
 
+        template_ctx = {
+            'dir_entries': diff_directory_entries(q, diff_base_url, version, version_other, path),
+            'back_url': f'{ diff_base_url }{ back_path }' if path != '' else None,
+        }
+        template = ctx.jinja_env.get_template('tree.html')
+    else:
+        code, code_other = generate_diff(q, project, version, version_other, path)
+
+        template_ctx = {
+            'code': code,
+            'code_other': code_other,
+            'diff_mode_available': True,
+            'diff_checked': True,
+            'diff_exit_url': stringify_source_path(project, version, path),
+        }
+        template = ctx.jinja_env.get_template('diff.html')
 
     # Create titles like this:
     # root path: "Linux source code (v5.5.6) - Bootlin"
@@ -828,21 +914,15 @@ def generate_diff_page(ctx: RequestContext, q: Query,
     get_url_with_new_version = lambda v: stringify_source_path(project, v, path)
     get_diff_url = lambda v_other: stringify_diff_path(project, version, v_other, path)
 
-    template = ctx.jinja_env.get_template('diff.html')
-
-    code, code_other = generate_diff(q, project, version, version_other, path)
     # Create template context
     data = {
         **get_layout_template_context(q, ctx, get_url_with_new_version, get_diff_url, project, version),
+        **template_ctx,
 
-        'code': code,
-        'code_other': code_other,
         'title_path': title_path,
         'path': path,
         'breadcrumb_links': breadcrumb_links,
-        'diff_mode_available': True,
-        'diff_checked': True,
-        'diff_exit_url': stringify_source_path(project, version, path),
+        'base_url': diff_base_url,
     }
 
     return (status, template.render(data))
@@ -1005,6 +1085,7 @@ def get_application():
     app.add_route('/{project}/{version}/ident/{ident}', IdentWithoutFamilyResource())
     app.add_route('/{project}/{version}/{family}/ident/{ident}', IdentResource())
     app.add_route('/{project}/{version}/diff/{version_other}/{path:path}', DiffResource())
+    app.add_route('/{project}/{version}/diff/{version_other}', DiffResource())
 
     app.add_route('/acp', AutocompleteResource())
     app.add_route('/api/ident/{project:project}/{ident:ident}', ApiIdentGetterResource())
