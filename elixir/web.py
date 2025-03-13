@@ -897,6 +897,7 @@ def generate_diff_page(ctx: RequestContext, q: Query,
             template_ctx = {
                 'code': code,
                 'code_other': code_other,
+                'other_tag': parse.unquote(version_other),
             }
             template = ctx.jinja_env.get_template('diff.html')
         else:

@@ -11,9 +11,11 @@
 {% block main %}
 <div class="diff">
     <div class="lxrcode">
+        <div class="version-banner">{{ current_tag }}</div>
         {{ code }}
     </div>
     <div class="lxrcode">
+        <div class="version-banner">{{ other_tag }}</div>
         {{ code_other }}
     </div>
 </div>

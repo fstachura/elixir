@@ -846,6 +846,13 @@ h2 {
   margin: 1.5em;
 }
 
+.lxrcode .version-banner {
+  width: 100%;
+  text-align: center;
+  padding: 0.5em;
+  border-bottom: 1px solid gray;
+}
+
 .lxrcode,
 .highlighttable,
 .linenodiv,
@@ -863,6 +870,10 @@ h2 {
 }
 
 .diff .highlight pre span:first-child {
+}
+
+.diff .lxrcode pre {
+  padding-top: 0;
 }
 
 .line-added {
@@ -1356,6 +1367,9 @@ main {
     position: sticky;
     left: 0;
     z-index: 1;
+  }
+  .js .diff .linenos {
+    position: static;
   }
   .js main {
     position: unset;
