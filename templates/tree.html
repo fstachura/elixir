@@ -15,6 +15,11 @@
 {% block main %}
 
 <div class="lxrtree">
+    {% for warning in warnings %}
+        {% if warning is not none %}
+            <div class="warning">Note: {{ warning }}</div>
+        {% endif %}
+    {% endfor %}
     <table>
         <tbody>
         {% if back_url is not none %}

@@ -796,6 +796,10 @@ h2 {
 .lxrtree tr:hover {
   background: #ddd;
 }
+.lxrtree .warning {
+  opacity: 0.5;
+  margin-left: 1.5em;
+}
 .tree-icon:before {
   display: inline-block;
   width: 1.5em;
@@ -835,6 +839,11 @@ h2 {
 
 .lxrcode pre * {
   vertical-align: top;
+}
+
+.lxrcode .warning {
+  opacity: 0.5;
+  margin: 1.5em;
 }
 
 .lxrcode,

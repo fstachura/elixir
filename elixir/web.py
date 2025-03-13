@@ -815,7 +815,7 @@ def diff_directory_entries(q: Query, base_url, tag: str, tag_other: str, path: s
             return (2, name)
 
     all_names = set(names.keys())
-    all_names.union(names_other.keys())
+    all_names = all_names.union(names_other.keys())
     all_names = sorted(all_names, key=dir_sort)
 
     for name in all_names:
@@ -872,33 +872,45 @@ def generate_diff_page(ctx: RequestContext, q: Query,
     type = q.get_file_type(version, path)
     type_other = q.get_file_type(version, path)
 
-    if type != type_other:
-        raise ElixirProjectError('File not found', f'This file is not present in {version}.',
-                                 status=falcon.HTTP_NOT_FOUND,
-                                 query=q, project=project, version=version,
-                                 extra_template_args={'breadcrumb_links': breadcrumb_links})
-
-    elif type == 'tree':
+    if type == 'tree' or type_other == 'tree':
         back_path = os.path.dirname(path[:-1])
         if back_path == '/':
             back_path = ''
 
+        def generate_warning(type, version):
+            if type == 'blob':
+                return f'{path} is a file in {version}'
+            elif type == '':
+                return f'{path} does not exist in {version}'
+
+        warnings = [generate_warning(type, version), generate_warning(type_other, version)]
+
         template_ctx = {
             'dir_entries': diff_directory_entries(q, diff_base_url, version, version_other, path),
             'back_url': f'{ diff_base_url }{ back_path }' if path != '' else None,
+            'warnings': warnings
         }
         template = ctx.jinja_env.get_template('tree.html')
+    elif type == 'blob' or type_other == 'blob':
+        if type == type_other == 'blob':
+            code, code_other = generate_diff(q, project, version, version_other, path)
+            template_ctx = {
+                'code': code,
+                'code_other': code_other,
+            }
+            template = ctx.jinja_env.get_template('diff.html')
+        else:
+            missing_version = version_other if type == 'blob' else version
+            template_ctx = {
+                'code': generate_source(q, project, version if type == 'blob' else version_other, path),
+                'warning': f'File does not exist in {missing_version}.'
+            }
+            template = ctx.jinja_env.get_template('source.html')
     else:
-        code, code_other = generate_diff(q, project, version, version_other, path)
-
-        template_ctx = {
-            'code': code,
-            'code_other': code_other,
-            'diff_mode_available': True,
-            'diff_checked': True,
-            'diff_exit_url': stringify_source_path(project, version, path),
-        }
-        template = ctx.jinja_env.get_template('diff.html')
+        raise ElixirProjectError('File not found', f'This file does not exist in {version} nor in {version_other}.',
+                                 status=falcon.HTTP_NOT_FOUND,
+                                 query=q, project=project, version=version,
+                                 extra_template_args={'breadcrumb_links': breadcrumb_links})
 
     # Create titles like this:
     # root path: "Linux source code (v5.5.6) - Bootlin"
@@ -918,6 +930,10 @@ def generate_diff_page(ctx: RequestContext, q: Query,
     data = {
         **get_layout_template_context(q, ctx, get_url_with_new_version, get_diff_url, project, version),
         **template_ctx,
+
+        'diff_mode_available': True,
+        'diff_checked': True,
+        'diff_exit_url': stringify_source_path(project, version, path),
 
         'title_path': title_path,
         'path': path,
