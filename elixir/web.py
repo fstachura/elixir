@@ -799,10 +799,10 @@ def diff_directory_entries(q: Query, base_url, tag: str, tag_other: str, path: s
     dir_entries = []
 
     names, names_other = {}, {}
-    for line in q.query('dir', tag, path):
+    for line in q.get_dir_contents(tag, path):
         n = line.split(' ')
         names[n[1]] = n
-    for line in q.query('dir', tag_other, path):
+    for line in q.get_dir_contents(tag_other, path):
         n = line.split(' ')
         names_other[n[1]] = n
 

@@ -105,6 +105,9 @@ class DiffFormater(HtmlFormatter):
 
         return next_diff, diff_num+1, next_diff_line
 
+    def mark_line(self, line, css_class):
+        yield line[0], f'<span class="{css_class}">{line[1]}</span>'
+
     def mark_lines(self, source, num, css_class):
         i = 0
         while i < num:
@@ -125,7 +128,7 @@ class DiffFormater(HtmlFormatter):
     def wrap_diff(self, source):
         next_diff, diff_num, next_diff_line = self.get_next_diff_line(0, None)
 
-        linenum = 1
+        linenum = 0
 
         while True:
             try:
@@ -133,30 +136,39 @@ class DiffFormater(HtmlFormatter):
             except StopIteration:
                 break
 
-            yield line
-
             if linenum == next_diff_line:
                 if next_diff is not None:
                     if self.left and next_diff[0] == '+':
                         yield from self.yield_empty(next_diff[3])
+                        yield line
+                        linenum += 1
                     elif next_diff[0] == '+':
-                        yield from self.mark_lines(source, next_diff[3], 'line-added')
+                        yield from self.mark_line(line, 'line-added')
+                        yield from self.mark_lines(source, next_diff[3]-1, 'line-added')
                         linenum += next_diff[3]
                     elif self.left and next_diff[0] == '-':
-                        yield from self.mark_lines(source, next_diff[3], 'line-removed')
+                        yield from self.mark_line(line, 'line-removed')
+                        yield from self.mark_lines(source, next_diff[3]-1, 'line-removed')
                         linenum += next_diff[3]
                     elif next_diff[0] == '-':
                         yield from self.yield_empty(next_diff[3])
+                        yield line
+                        linenum += 1
                     elif next_diff[0] == '=':
                         total = max(next_diff[2], next_diff[4])
                         to_print = next_diff[2] if self.left else next_diff[4]
-                        yield from self.mark_lines(source, to_print, 'line-removed' if self.left else 'line-added')
+                        yield from self.mark_line(line, 'line-removed' if self.left else 'line-added')
+                        yield from self.mark_lines(source, to_print-1, 'line-removed' if self.left else 'line-added')
                         yield from self.yield_empty(total-to_print)
                         linenum += to_print
+                    else:
+                        yield line
+                        linenum += 1
 
                 next_diff, diff_num, next_diff_line = self.get_next_diff_line(diff_num, next_diff_line)
-
-            linenum += 1
+            else:
+                yield line
+                linenum += 1
 
     def wrap(self, source):
         return super().wrap(self.wrap_diff(source))
