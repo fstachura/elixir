@@ -546,7 +546,7 @@ def format_code(filename: str, code: str) -> str:
     lexer.stripnl = False
     formatter = pygments.formatters.HtmlFormatter(
         # Adds line numbers column to output
-        linenos=True,
+        linenos='inline',
         # Wraps line numbers in link (a) tags
         anchorlinenos=True,
         # Wraps each line in a span tag with id='codeline-{line_number}'

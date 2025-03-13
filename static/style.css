@@ -904,15 +904,15 @@ span[id^='codeline-'] {
   height: 100%;
 }
 
-.diff span[id^='codeline-'] {
+span[id^='codeline-'] {
   padding-left: unset;
 }
 
-.diff span[id^='codeline-'] span {
+span[id^='codeline-'] span {
   display: inline-block;
 }
 
-.diff .line-link {
+.line-link {
   background: #e9e9e9;
   color: #999;
   padding-left: 1em;
@@ -1362,14 +1362,11 @@ main {
     position: sticky;
     left: 0;
   }
-  .js .linenos {
+  .js .line-link {
     position: -webkit-sticky;
     position: sticky;
     left: 0;
     z-index: 1;
-  }
-  .js .diff .linenos {
-    position: static;
   }
   .js main {
     position: unset;
