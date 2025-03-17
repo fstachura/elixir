@@ -922,7 +922,7 @@ span[id^='codeline-'] span {
   height: 100%;
 }
 
-span[id^='codeline-'].line-highlight {
+span.line-highlight {
   width: 100%;
   height: 100%;
   background: #f8edc3;
@@ -939,9 +939,6 @@ span[id^='codeline-'].line-highlight {
   width: 100%;
   scroll-margin: 15vh;
   scroll-margin-top: 15vh;
-}
-.line-highlight {
-  background: #ccc;
 }
 .linenodiv pre a.line-highlight,
 .linenodiv pre span {
