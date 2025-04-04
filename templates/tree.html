@@ -29,10 +29,9 @@
             </tr>
         {% endif %}
         {% for type, name, path, url, size, cls in dir_entries %}
-            <tr>
+            <tr class="{{ "file-"+cls if cls is not none else '' -}}">
                 <td>
-                    <a class="tree-icon icon-{{- type if type != 'symlink' else 'blob' }} 
-                       line-{{- cls if cls is not none else '' -}}"
+                    <a class="tree-icon icon-{{- type if type != 'symlink' else 'blob' }}"
                        href="{{ url }}">
                     {% if type == 'symlink' %}
                         {{ name }} -> {{  path }}

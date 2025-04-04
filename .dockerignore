@@ -11,6 +11,9 @@ venv/
 **/*.db
 **/repo
 **/data
+**/data2
+**/data-indexing
+**/data-new-ctags
 
 .git
 .gitignore

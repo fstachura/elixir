@@ -65,6 +65,15 @@ ENV ELIXIR_VERSION=$ELIXIR_VERSION \
     PATH="/usr/local/elixir/utils:/usr/local/elixir/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1
 
-COPY . /usr/local/elixir/
+COPY ./elixir/ /usr/local/elixir
+COPY ./utils/ /usr/local/elixir
+COPY ./projects/ /usr/local/elixir
+COPY ./templates/ /usr/local/elixir
+COPY ./static/ /usr/local/elixir
+COPY ./utils/ /usr/local/elixir
+COPY ./t/ /usr/local/elixir
+COPY samples/ /usr/local/elixir
+COPY *.py /usr/local/elixir
+COPY *.sh /usr/local/elixir
 
 ENTRYPOINT ["/usr/sbin/apache2ctl", "-D", "FOREGROUND"]

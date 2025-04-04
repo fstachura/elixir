@@ -793,6 +793,9 @@ h2 {
   display: block;
   padding: 0.15em 1.5em;
 }
+.lxrtree tr {
+  opacity: 1;
+}
 .lxrtree tr:hover {
   background: #ddd;
 }
@@ -818,10 +821,35 @@ h2 {
 .tree-icon.icon-back:hover {
   opacity: 1;
 }
+
 .size {
-  opacity: 0.6;
+  color: rgba(0, 0, 0, 0.6);
   min-height: 1.5em; /* line_height + 2 * padding = 1.2em + 2 * 0.15em */
   text-align: right;
+}
+
+.file-added {
+  background: #c2ffad;
+}
+
+.lxrtree .file-added:hover {
+  background: #c9e9c0;
+}
+
+.file-removed {
+  background: #fcc0c0;
+}
+
+.lxrtree .file-removed:hover {
+  background: #e7c8c8;
+}
+
+.file-changed {
+  background: #f8edc3;
+}
+
+.lxrtree .file-changed:hover {
+  background: #e5dfca;
 }
 
 
@@ -849,8 +877,9 @@ h2 {
 .lxrcode .version-banner {
   width: 100%;
   text-align: center;
-  padding: 0.5em;
-  border-bottom: 1px solid gray;
+  padding: 0.3em;
+  background-color: #e9e9e9;
+  color: #555;
 }
 
 .lxrcode,
@@ -858,6 +887,10 @@ h2 {
 .linenodiv,
 .highlight {
   height: 100%;
+}
+
+#L1 {
+  padding-top: 1em;
 }
 
 .diff {
@@ -1653,7 +1686,7 @@ main {
 }
 .nav-links a:hover {
   color: #fff;
-}
+)}
 
 .social-icons {
   position: absolute;
