@@ -921,7 +921,7 @@ def generate_diff_page(ctx: RequestContext, q: Query,
                 warning = f'Files are the same in {version} and {version_other}.'
             else:
                 missing_version = version_other if type == 'blob' else version
-                warning = f'File does not exist or is not a file {missing_version}.'
+                warning = f'File does not exist, or is not a file in {missing_version}. ({version} displayed)'
 
             template_ctx = {
                 'code': generate_source(q, project, version if type == 'blob' else version_other, path),

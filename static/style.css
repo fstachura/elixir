@@ -799,10 +799,12 @@ h2 {
 .lxrtree tr:hover {
   background: #ddd;
 }
+
 .lxrtree .warning {
   opacity: 0.5;
   margin-left: 1.5em;
 }
+
 .tree-icon:before {
   display: inline-block;
   width: 1.5em;
@@ -869,12 +871,7 @@ h2 {
   vertical-align: top;
 }
 
-.lxrcode .warning {
-  opacity: 0.5;
-  margin: 1.5em;
-}
-
-.lxrcode .version-banner {
+.lxrcode .note-banner {
   width: 100%;
   text-align: center;
   padding: 0.3em;
