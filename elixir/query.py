@@ -176,6 +176,9 @@ class Query:
     def get_file_type(self, version, path):
         return decode(self.script('get-type', version, path)).strip()
 
+    def get_blob_id(self, version, path):
+        return decode(self.script('get-blob-id', version, path)).strip()
+
     # Returns identifier search results
     def search_ident(self, version, ident, family):
         # DT bindings compatible strings are handled differently

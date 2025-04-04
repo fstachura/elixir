@@ -43,7 +43,7 @@ from .autocomplete import AutocompleteResource
 from .api import ApiIdentGetterResource
 from .query import get_query
 from .web_utils import ProjectConverter, IdentConverter, validate_version, validate_project, validate_ident, \
-        get_elixir_version_string, get_elixir_repo_link, RequestContext, Config, DiffFormater
+        get_elixir_version_string, get_elixir_repo_url, RequestContext, Config, DiffFormater
 
 VERSION_CACHE_DURATION_SECONDS = 2 * 60  # 2 minutes
 ADD_ISSUE_LINK = "https://github.com/bootlin/elixir/issues/new"
@@ -884,7 +884,9 @@ def generate_diff_page(ctx: RequestContext, q: Query,
         breadcrumb_links.append((p, f'{ diff_base_url }{ path_temp }'))
 
     type = q.get_file_type(version, path)
-    type_other = q.get_file_type(version, path)
+    type_other = q.get_file_type(version_other, path)
+    blob_id = q.get_blob_id(version, path)
+    blob_id_other = q.get_blob_id(version_other, path)
 
     if type == 'tree' or type_other == 'tree':
         back_path = os.path.dirname(path[:-1])
@@ -906,7 +908,7 @@ def generate_diff_page(ctx: RequestContext, q: Query,
         }
         template = ctx.jinja_env.get_template('tree.html')
     elif type == 'blob' or type_other == 'blob':
-        if type == type_other == 'blob':
+        if type == type_other == 'blob' and blob_id != blob_id_other:
             code, code_other = generate_diff(q, project, version, version_other, path)
             template_ctx = {
                 'code': code,
@@ -915,10 +917,15 @@ def generate_diff_page(ctx: RequestContext, q: Query,
             }
             template = ctx.jinja_env.get_template('diff.html')
         else:
-            missing_version = version_other if type == 'blob' else version
+            if blob_id == blob_id_other:
+                warning = f'Files are the same in {version} and {version_other}.'
+            else:
+                missing_version = version_other if type == 'blob' else version
+                warning = f'File does not exist or is not a file {missing_version}.'
+
             template_ctx = {
                 'code': generate_source(q, project, version if type == 'blob' else version_other, path),
-                'warning': f'File does not exist in {missing_version}.'
+                'warning': warning
             }
             template = ctx.jinja_env.get_template('source.html')
     else:
