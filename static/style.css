@@ -726,6 +726,10 @@ h2 {
   color: gray;
 }
 
+.workspace {
+  position: relative;
+}
+
 /* ident */
 
 .lxrident {
@@ -857,9 +861,6 @@ h2 {
 
 /* source code */
 
-.lxrcode {
-  position: relative;
-}
 .lxrcode pre {
   margin: 0;
   padding-top: 1em;
@@ -891,8 +892,8 @@ h2 {
 }
 
 .diff {
-    display: grid;
-    grid-template-columns: 50% 50%;
+  display: grid;
+  grid-template-columns: 50% 50%;
 }
 
 .diff-line {
