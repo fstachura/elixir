@@ -1015,10 +1015,10 @@ span.line-highlight {
   border-radius: 0.2em;
 }
 .highlight .line-removed a {
-  background: unset;
+  background: #fcc0c0;
 }
 .highlight .line-added a {
-  background: unset;
+  background: #c2ffad;
 }
 .highlight a:hover {
   border-bottom: 1px dotted #000;
