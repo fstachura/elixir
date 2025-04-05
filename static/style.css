@@ -913,6 +913,10 @@ h2 {
   display: block;
 }
 
+.line-highlight.line-added .line-link {
+  background: #C2FFAD;
+}
+
 .line-removed {
   width: 100%;
   height: 100%;
@@ -920,11 +924,8 @@ h2 {
   display: block;
 }
 
-.line-changed {
-  width: 100%;
-  height: 100%;
-  background: #f8edc3;
-  display: block;
+.line-highlight.line-removed .line-link {
+  background: #fcc0c0;
 }
 
 span[id^='codeline-'] {
