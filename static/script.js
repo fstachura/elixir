@@ -165,10 +165,16 @@ function highlightFromTo(firstLine, lastLine, prefix='L') {
   const firstLineElement = document.getElementById(`${ prefix }${ firstLine }`);
   const lastLineElement = document.getElementById(`${ prefix }${ lastLine }`);
 
-  const firstCodeLine = firstLineElement.parentNode;
-  const lastCodeLine = lastLineElement.parentNode;
+  let firstCodeLine = firstLineElement.parentNode;
+  // handle line-added/changed/deleted wrappers
+  if (firstCodeLine.parentNode.tagName != "PRE") {
+    firstCodeLine = firstCodeLine.parentNode;
+  }
+  let lastCodeLine = lastLineElement.parentNode;
+  if (lastCodeLine.parentNode.tagName != "PRE") {
+    lastCodeLine = lastCodeLine.parentNode;
+  }
 
-  addClassToRangeOfElements(firstLineElement.parentNode, lastLineElement.parentNode, "line-highlight");
   addClassToRangeOfElements(firstCodeLine, lastCodeLine, "line-highlight");
 }
 
