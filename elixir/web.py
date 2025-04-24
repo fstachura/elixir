@@ -34,7 +34,7 @@ import jinja2
 
 from .lib import validFamily, getFileFamily
 from .query import Query, SymbolInstance
-from .filters import get_filters
+from .project_utils import get_filters
 from .filters.utils import FilterContext
 from .autocomplete import AutocompleteResource
 from .api import ApiIdentGetterResource
