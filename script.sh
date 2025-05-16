@@ -165,7 +165,6 @@ parse_defs_C()
     git cat-file blob "$opt1" > "$full_path"
 
     # Use ctags to parse most of the defs
-    ctags -x --kinds-c=+p+x --extras='-{anonymous}' "$full_path" |
     ctags -u -x --kinds-c=+p+x --extras='-{anonymous}' "$full_path" |
     grep -avE -e "^operator " -e "^CONFIG_" |
     awk '{print $1" "$2" "$3}'
@@ -248,9 +247,9 @@ case $cmd in
         tags=`get_tags`
 
         if [ "$opt1" = '-h' ]; then
-            list_tags_h | grep ' v3.8$'
+            list_tags_h
         else
-            list_tags | grep '^v3.8$'
+            list_tags
         fi
         ;;
 

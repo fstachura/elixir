@@ -1,21 +1,24 @@
-from concurrent.futures import ProcessPoolExecutor, wait
-from multiprocessing import Manager, cpu_count
-from multiprocessing.pool import Pool
 import logging
+from multiprocessing import cpu_count
+from multiprocessing.pool import ThreadPool, Pool
+from typing import Tuple
 
-from elixir.lib import script, scriptLines, getFileFamily, isIdent, getDataDir, compatibleFamily, compatibleMacro
-from elixir.data import PathList, DefList, RefList, DB, BsdDB
+from elixir.lib import script, scriptLinesGen, getFileFamily, isIdent, getDataDir, compatibleFamily, compatibleMacro
+from elixir.data import PathList, DefList, RefList, DB
 
 from find_compatible_dts import FindCompatibleDTS
+
+FileId = Tuple[bytes, bytes, bytes]
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 # Holds databases and update changes that are not commited yet
 class UpdatePartialState:
-    def __init__(self, db, tag, idx_to_hash_and_filename, hash_to_idx):
+    def __init__(self, db, tag, blobs, idx_to_hash_and_filename, hash_to_idx):
         self.db = db
         self.tag = tag
+        self.blobs = blobs
         self.idx_to_hash_and_filename = idx_to_hash_and_filename
         self.hash_to_idx = hash_to_idx
         self.def_idents = {}
@@ -112,14 +115,14 @@ class UpdatePartialState:
 
 # NOTE: not thread safe, has to be ran before the actual job is started
 # Builds UpdatePartialState
-def build_partial_state(db, tag):
+def build_partial_state(db: DB, tag: bytes):
     if db.vars.exists('numBlobs'):
         idx = db.vars.get('numBlobs')
     else:
         idx = 0
 
     # Get blob hashes and associated file names (without path)
-    blobs = scriptLines('list-blobs', '-f', tag)
+    blobs = scriptLinesGen('list-blobs', '-f', tag)
 
     idx_to_hash_and_filename = {}
     hash_to_idx = {}
@@ -133,13 +136,14 @@ def build_partial_state(db, tag):
             idx_to_hash_and_filename[idx] = (hash, filename.decode())
             idx += 1
 
-    # reserve ids in blob space.
+    # Reserve ids in blob space - if update is interrupted, as long as all database writes
+    # finished correctly, the changes won't be seen by the application itself.
     # NOTE: this variable does not represent the actual number of blos in the database now,
     # just the number of ids reserved for blobs. the space is not guaranteed to be continous
     # if update job is interrupted or versions are scrubbed from the database.
     db.vars.put('numBlobs', idx)
 
-    return UpdatePartialState(db, tag, idx_to_hash_and_filename, hash_to_idx)
+    return UpdatePartialState(db, tag, blobs, idx_to_hash_and_filename, hash_to_idx)
 
 # NOTE: not thread safe, has to be ran after job is finished
 # Applies changes from partial update state - mainly to hash, file, blob and versions databases
@@ -153,10 +157,9 @@ def apply_partial_state(state: UpdatePartialState):
         state.db.blob.put(hash, idx)
 
     # Update versions
-    blobs = scriptLines('list-blobs', '-p', state.tag)
     buf = []
 
-    for blob in blobs:
+    for blob in state.blobs:
         hash, path = blob.split(b' ', maxsplit=1)
         idx = state.get_idx_from_hash(hash)
         buf.append((idx, path))
@@ -169,15 +172,16 @@ def apply_partial_state(state: UpdatePartialState):
     state.db.vers.put(state.tag, obj, sync=True)
     state.generate_defs_caches()
 
-# Get definitions for a file
-def get_defs(file_id):
+
+# Collect definitions from ctags for a file
+def get_defs(file_id: FileId):
     idx, hash, filename = file_id
     defs = {}
     family = getFileFamily(filename)
     if family in [None, 'M']:
         return {}
 
-    lines = scriptLines('parse-defs', hash, filename, family)
+    lines = scriptLinesGen('parse-defs', hash, filename, family)
 
     for l in lines:
         ident, type, line = l.split(b' ')
@@ -190,10 +194,8 @@ def get_defs(file_id):
 
     return defs
 
-
-# Get references for a file
-def get_refs(file_id):
-    logger.info("get refs %s", file_id)
+# Collect references from the tokenizer for a file
+def get_refs(file_id: FileId):
     idx, hash, filename = file_id
     refs = {}
     family = getFileFamily(filename)
@@ -203,7 +205,7 @@ def get_refs(file_id):
     # Kconfig values are saved as CONFIG_<value>
     prefix = b'' if family != 'K' else b'CONFIG_'
 
-    tokens = scriptLines('tokenize-file', '-b', hash, family)
+    tokens = scriptLinesGen('tokenize-file', '-b', hash, family)
     even = True
     line_num = 1
 
@@ -225,7 +227,6 @@ def get_refs(file_id):
         else:
             line_num += tok.count(b'\1')
 
-    logger.info("get refs done %s", file_id)
     return refs
 
 # Collect compatible script output into reflist-schema compatible format
@@ -241,37 +242,36 @@ def collect_get_blob_output(lines):
 
     return results
 
-# Get docs for a single file
-def get_docs(file_id):
+# Collect docs from doc comments script for a single file
+def get_docs(file_id: FileId):
     idx, hash, filename = file_id
     family = getFileFamily(filename)
     if family in [None, 'M']: return
 
-    lines = (line.decode() for line in scriptLines('parse-docs', hash, filename))
+    lines = (line.decode() for line in scriptLinesGen('parse-docs', hash, filename))
     docs = collect_get_blob_output(lines)
 
     return (idx, family, docs)
 
-# Get compatible references for a single file
-def get_comps(file_id):
+# Collect compatible references for a single file
+def get_comps(file_id: FileId):
     idx, hash, filename = file_id
     family = getFileFamily(filename)
     if family in [None, 'K', 'M']: return
 
     compatibles_parser = FindCompatibleDTS()
-    lines = compatibles_parser.run(scriptLines('get-blob', hash), family)
+    lines = compatibles_parser.run(scriptLinesGen('get-blob', hash), family)
     comps = collect_get_blob_output(lines)
 
     return (idx, family, comps)
 
-# Get compatible documentation references for a single file
-# NOTE: assumes comps is not running concurrently
-def get_comps_docs(file_id):
+# Collect compatible documentation references for a single file
+def get_comps_docs(file_id: FileId):
     idx, hash, _ = file_id
     family = 'B'
 
     compatibles_parser = FindCompatibleDTS()
-    lines = compatibles_parser.run(scriptLines('get-blob', hash), family)
+    lines = compatibles_parser.run(scriptLinesGen('get-blob', hash), family)
     comps_docs = {}
     for l in lines:
         ident, line = l.split(' ')
@@ -282,7 +282,8 @@ def get_comps_docs(file_id):
 
     return (idx, family, comps_docs)
 
-# Update a single version
+
+# Update a single version - collects data from all the stages and saves it in the database
 def update_version(db, tag, pool, dts_comp_support):
     state = build_partial_state(db, tag)
 
@@ -317,10 +318,8 @@ def update_version(db, tag, pool, dts_comp_support):
         logger.info("dts comps docs done")
 
     for result in pool.imap_unordered(get_refs, idxes, chunksize):
-        logger.info("writing ref")
         if result is not None:
             state.add_refs(result)
-        logger.info("writing ref done")
 
     logger.info("refs done")
 
@@ -332,7 +331,7 @@ if __name__ == "__main__":
     db = None
 
     with Pool() as pool:
-        for tag in scriptLines('list-tags'):
+        for tag in scriptLinesGen('list-tags'):
             if db is None:
                 db = DB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, cachesize=(2,0))
 

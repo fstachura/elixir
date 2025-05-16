@@ -52,6 +52,13 @@ def scriptLines(*args, env=None):
     del p[-1]
     return p
 
+def scriptLinesGen(*args, env=None):
+    args = (os.path.join(CURRENT_DIR, 'script.sh'),) + args
+    p = subprocess.Popen(args, stdout=subprocess.PIPE, env=env)
+    while line := p.stdout.readline():
+        # yield without newline
+        yield line[:-1]
+
 def unescape(bstr):
     subs = (
         ('\1','\n'),

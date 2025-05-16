@@ -22,28 +22,26 @@ import re
 from urllib import parse
 from elixir.lib import decode
 
-class FindCompatibleDTS:
-    def __init__(self):
-        # Compile regexes
-        self.regex_c = re.compile("\s*{*\s*\.compatible\s*=\s*\"(.+?)\"")
-        self.regex_dts1 = re.compile("\s*compatible")
-        self.regex_dts2 = re.compile("\"(.+?)\"")
-        self.regex_bindings = re.compile("([\w-]+,?[\w-]+)")
+regex_c = re.compile("\s*{*\s*\.compatible\s*=\s*\"(.+?)\"")
+regex_dts1 = re.compile("\s*compatible")
+regex_dts2 = re.compile("\"(.+?)\"")
+regex_bindings = re.compile("([\w-]+,?[\w-]+)")
 
+class FindCompatibleDTS:
     def parse_c(self, content):
-        return self.regex_c.findall(content)
+        return regex_c.findall(content)
 
     def parse_dts(self, content):
         ret = []
-        if self.regex_dts1.match(content) != None:
-            ret = self.regex_dts2.findall(content)
+        if regex_dts1.match(content) != None:
+            ret = regex_dts2.findall(content)
         return ret
 
     def parse_bindings(self, content):
         # There are a lot of wrong results
         # but we don't apply that to a lot of files
         # so it should be fine
-        return self.regex_bindings.findall(content)
+        return regex_bindings.findall(content)
 
     def run(self, file_lines, family):
         ident_list = []
