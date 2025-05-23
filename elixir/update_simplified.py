@@ -14,109 +14,84 @@ FileId = Tuple[bytes, bytes, bytes]
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
-# Holds databases and update changes that are not commited yet
-class UpdatePartialState:
-    def __init__(self, db, tag, blobs, idx_to_hash_and_filename, hash_to_idx):
-        self.db = db
-        self.tag = tag
-        self.blobs = blobs
-        self.idx_to_hash_and_filename = idx_to_hash_and_filename
-        self.hash_to_idx = hash_to_idx
-        self.def_idents = {}
-
-    def get_idx_from_hash(self, hash):
-        if hash in self.hash_to_idx:
-            return self.hash_to_idx[hash]
+# Add definitions to database
+def add_defs(db, def_idents, defs):
+    for ident, occ_list in defs.items():
+        if db.defs.exists(ident):
+            obj = db.defs.get(ident)
         else:
-            return self.db.blob.get(hash)
+            obj = DefList()
 
-    # Add definitions to database
-    def add_defs(self, defs):
-        for ident, occ_list in defs.items():
-            if self.db.defs.exists(ident):
-                obj = self.db.defs.get(ident)
-            else:
-                obj = DefList()
+        if ident in def_idents:
+            lines_list = def_idents[ident]
+        else:
+            lines_list = []
+            def_idents[ident] = lines_list
 
-            if ident in self.def_idents:
-                lines_list = self.def_idents[ident]
-            else:
-                lines_list = []
-                self.def_idents[ident] = lines_list
+        for (idx, type, line, family) in occ_list:
+            obj.append(idx, type, line, family)
+            lines_list.append((idx, line))
 
-            for (idx, type, line, family) in occ_list:
-                obj.append(idx, type, line, family)
-                lines_list.append((idx, line))
+        db.defs.put(ident, obj)
 
-            self.db.defs.put(ident, obj)
+# Add references to database
+def add_refs(db, def_idents, refs):
+    for ident, idx_to_lines in refs.items():
+        deflist = def_idents.get(ident)
+        if deflist is None:
+            continue
 
-    # Add references to database
-    def add_refs(self, refs):
-        for ident, idx_to_lines in refs.items():
-            deflist = self.def_idents.get(ident)
-            if deflist is None:
-                continue
+        def deflist_exists(idx, n):
+            for didx, dn in deflist:
+                if didx == idx and dn == n:
+                    return True
+            return False
 
-            def deflist_exists(idx, n):
-                for didx, dn in deflist:
-                    if didx == idx and dn == n:
-                        return True
-                return False
+        obj = db.refs.get(ident)
+        if obj is None:
+            obj = RefList()
 
-            obj = self.db.refs.get(ident)
-            if obj is None:
-                obj = RefList()
+        for (idx, family), lines in idx_to_lines.items():
+            lines = [n for n in lines if not deflist_exists(str(idx).encode(), n)]
 
-            for (idx, family), lines in idx_to_lines.items():
-                lines = [n for n in lines if not deflist_exists(str(idx).encode(), n)]
+            if len(lines) != 0:
+                lines_str = ','.join((str(n) for n in lines))
+                obj.append(idx, lines_str, family)
 
-                if len(lines) != 0:
-                    lines_str = ','.join((str(n) for n in lines))
-                    obj.append(idx, lines_str, family)
+        db.refs.put(ident, obj)
 
-            self.db.refs.put(ident, obj)
+# Add documentation references to database
+def add_docs(db, idx, family, docs):
+    add_to_reflist(db.docs, idx, family, docs)
 
-    # Add documentation references to database
-    def add_docs(self, idx, family, docs):
-        self.add_to_reflist(self.db.docs, idx, family, docs)
+# Add compatible references to database
+def add_comps(db, idx, family, comps):
+    add_to_reflist(db.comps, idx, family, comps)
 
-    # Add compatible references to database
-    def add_comps(self, idx, family, comps):
-        self.add_to_reflist(self.db.comps, idx, family, comps)
+# Add compatible docs to database
+def add_comps_docs(db, idx, family, comps_docs):
+    comps_result = {}
+    for ident, v in comps_docs.items():
+        if db.comps.exists(ident):
+            comps_result[ident] = v
 
-    # Add compatible docs to database
-    def add_comps_docs(self, idx, family, comps_docs):
-        comps_result = {}
-        for ident, v in comps_docs.items():
-            if self.db.comps.exists(ident):
-                comps_result[ident] = v
+    add_to_reflist(db.comps_docs, idx, family, comps_result)
 
-        self.add_to_reflist(self.db.comps_docs, idx, family, comps_result)
+# Add data to database file that uses reflist schema
+def add_to_reflist(db_file, idx, family, to_add):
+    for ident, lines in to_add.items():
+        if db_file.exists(ident):
+            obj = db_file.get(ident)
+        else:
+            obj = RefList()
 
-    # Add data to database file that uses reflist schema
-    def add_to_reflist(self, db_file, idx, family, to_add):
-        for ident, lines in to_add.items():
-            if db_file.exists(ident):
-                obj = db_file.get(ident)
-            else:
-                obj = RefList()
-
-            lines_str = ','.join((str(n) for n in lines))
-            obj.append(idx, lines_str, family)
-            db_file.put(ident, obj)
-
-    def generate_defs_caches(self):
-        for key in self.db.defs.get_keys():
-            value = self.db.defs.get(key)
-            for family in ['C', 'K', 'D', 'M']:
-                if (compatibleFamily(value.get_families(), family) or
-                            compatibleMacro(value.get_macros(), family)):
-                    self.db.defs_cache[family].put(key, b'')
+        lines_str = ','.join((str(n) for n in lines))
+        obj.append(idx, lines_str, family)
+        db_file.put(ident, obj)
 
 
 # NOTE: not thread safe, has to be ran before the actual job is started
-# Builds UpdatePartialState
-def build_partial_state(db: DB, tag: bytes):
+def collect_blobs(db: DB, tag: bytes):
     if db.vars.exists('numBlobs'):
         idx = db.vars.get('numBlobs')
     else:
@@ -124,17 +99,19 @@ def build_partial_state(db: DB, tag: bytes):
 
     # Get blob hashes and associated file names (without path)
     blobs = scriptLinesGen('list-blobs', '-f', tag)
-
+    versionBuf = []
     idx_to_hash_and_filename = {}
-    hash_to_idx = {}
 
     # Collect new blobs, assign database ids to the blobs
     for blob in blobs:
         hash, filename = blob.split(b' ',maxsplit=1)
         blob_exist = db.blob.exists(hash)
+        versionBuf .append((idx, filename))
         if not blob_exist:
-            hash_to_idx[hash] = idx
             idx_to_hash_and_filename[idx] = (hash, filename.decode())
+            db.blob.put(hash, idx)
+            db.hash.put(idx, hash)
+            db.file.put(idx, filename)
             idx += 1
 
     # Reserve ids in blob space - if update is interrupted, as long as all database writes
@@ -144,34 +121,21 @@ def build_partial_state(db: DB, tag: bytes):
     # if update job is interrupted or versions are scrubbed from the database.
     db.vars.put('numBlobs', idx)
 
-    return UpdatePartialState(db, tag, blobs, idx_to_hash_and_filename, hash_to_idx)
-
-# NOTE: not thread safe, has to be ran after job is finished
-# Applies changes from partial update state - mainly to hash, file, blob and versions databases
-# It is assumed that indexes not present in versions are ignored
-def apply_partial_state(state: UpdatePartialState):
-    for idx, (hash, filename) in state.idx_to_hash_and_filename.items():
-        state.db.hash.put(idx, hash)
-        state.db.file.put(idx, filename)
-
-    for hash, idx in state.hash_to_idx.items():
-        state.db.blob.put(hash, idx)
-
-    # Update versions
-    buf = []
-
-    for blob in state.blobs:
-        hash, path = blob.split(b' ', maxsplit=1)
-        idx = state.get_idx_from_hash(hash)
-        buf.append((idx, path))
-
-    buf.sort()
+    versionBuf.sort()
     obj = PathList()
-    for idx, path in buf:
+    for idx, path in versionBuf:
         obj.append(idx, path)
+    db.vers.put(tag, obj, sync=True)
 
-    state.db.vers.put(state.tag, obj, sync=True)
-    state.generate_defs_caches()
+    return idx_to_hash_and_filename
+
+def generate_defs_caches(db):
+    for key in db.defs.get_keys():
+        value = db.defs.get(key)
+        for family in ['C', 'K', 'D', 'M']:
+            if (compatibleFamily(value.get_families(), family) or
+                        compatibleMacro(value.get_macros(), family)):
+                db.defs_cache[family].put(key, b'')
 
 
 # Collect definitions from ctags for a file
@@ -286,46 +250,51 @@ def get_comps_docs(file_id: FileId):
 
 # Update a single version - collects data from all the stages and saves it in the database
 def update_version(db, tag, pool, dts_comp_support):
-    state = build_partial_state(db, tag)
+    idx_to_hash_and_filename = collect_blobs(db, tag)
+    def_idents = {}
 
     # Collect blobs to process and split list of blobs into chunks
-    idxes = [(idx, hash, filename) for (idx, (hash, filename)) in state.idx_to_hash_and_filename.items()]
+    idxes = [(idx, hash, filename) for (idx, (hash, filename)) in idx_to_hash_and_filename.items()]
     chunksize = int(len(idxes) / cpu_count())
     chunksize = min(max(1, chunksize), 100)
 
+    collect_blobs(db, tag)
+    logger.info("collecting blobs done")
+
     for result in pool.imap_unordered(get_defs, idxes, chunksize):
         if result is not None:
-            state.add_defs(result)
+            add_defs(db, def_idents, result)
 
     logger.info("defs done")
 
     for result in pool.imap_unordered(get_docs, idxes, chunksize):
         if result is not None:
-            state.add_docs(*result)
+            add_docs(db, *result)
 
     logger.info("docs done")
 
     if dts_comp_support:
         for result in pool.imap_unordered(get_comps, idxes, chunksize):
             if result is not None:
-                state.add_comps(*result)
+                add_comps(db, *result)
 
         logger.info("dts comps done")
 
         for result in pool.imap_unordered(get_comps_docs, idxes, chunksize):
             if result is not None:
-                state.add_comps_docs(*result)
+                add_comps_docs(db, *result)
 
         logger.info("dts comps docs done")
 
     for result in pool.imap_unordered(get_refs, idxes, chunksize):
         if result is not None:
-            state.add_refs(result)
+            add_refs(db, def_idents, result)
 
     logger.info("refs done")
 
-    logger.info("update done, applying partial state")
-    apply_partial_state(state)
+    generate_defs_caches(db)
+    logger.info("update done")
+
 
 if __name__ == "__main__":
     dts_comp_support = int(script('dts-comp'))

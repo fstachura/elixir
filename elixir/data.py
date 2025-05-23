@@ -160,7 +160,10 @@ class BsdDB:
         flags = berkeleydb.db.DB_THREAD if shared else 0
 
         if cachesize is not None:
+            print("adding cache", filename)
             self.db.set_cachesize(cachesize[0], cachesize[1])
+        else:
+            print("not adding cache", filename)
 
         if readonly:
             flags |= berkeleydb.db.DB_RDONLY

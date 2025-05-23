@@ -4,7 +4,7 @@ from multiprocessing import cpu_count
 from multiprocessing.pool import ThreadPool, Pool
 from typing import Tuple
 
-from elixir.lib import script, scriptLinesGen, getFileFamily, isIdent, getDataDir, compatibleFamily, compatibleMacro
+from elixir.lib import script, scriptLines, getFileFamily, isIdent, getDataDir, compatibleFamily, compatibleMacro
 from elixir.data import PathList, DefList, RefList, DB
 
 from find_compatible_dts import FindCompatibleDTS
@@ -123,7 +123,7 @@ def build_partial_state(db: DB, tag: bytes):
         idx = 0
 
     # Get blob hashes and associated file names (without path)
-    blobs = scriptLinesGen('list-blobs', '-f', tag)
+    blobs = scriptLines('list-blobs', '-f', tag)
 
     idx_to_hash_and_filename = {}
     hash_to_idx = {}
@@ -182,7 +182,7 @@ def get_defs(file_id: FileId):
     if family in [None, 'M']:
         return {}
 
-    lines = scriptLinesGen('parse-defs', hash, filename, family)
+    lines = scriptLines('parse-defs', hash, filename, family)
 
     for l in lines:
         ident, type, line = l.split(b' ')
@@ -206,7 +206,7 @@ def get_refs(file_id: FileId):
     # Kconfig values are saved as CONFIG_<value>
     prefix = b'' if family != 'K' else b'CONFIG_'
 
-    tokens = scriptLinesGen('tokenize-file', '-b', hash, family)
+    tokens = scriptLines('tokenize-file', '-b', hash, family)
     even = True
     line_num = 1
 
@@ -249,7 +249,7 @@ def get_docs(file_id: FileId):
     family = getFileFamily(filename)
     if family in [None, 'M']: return
 
-    lines = (line.decode() for line in scriptLinesGen('parse-docs', hash, filename))
+    lines = (line.decode() for line in scriptLines('parse-docs', hash, filename))
     docs = collect_get_blob_output(lines)
 
     return (idx, family, docs)
@@ -261,7 +261,7 @@ def get_comps(file_id: FileId):
     if family in [None, 'K', 'M']: return
 
     compatibles_parser = FindCompatibleDTS()
-    lines = compatibles_parser.run(scriptLinesGen('get-blob', hash), family)
+    lines = compatibles_parser.run(scriptLines('get-blob', hash), family)
     comps = collect_get_blob_output(lines)
 
     return (idx, family, comps)
@@ -272,7 +272,7 @@ def get_comps_docs(file_id: FileId):
     family = 'B'
 
     compatibles_parser = FindCompatibleDTS()
-    lines = compatibles_parser.run(scriptLinesGen('get-blob', hash), family)
+    lines = compatibles_parser.run(scriptLines('get-blob', hash), family)
     comps_docs = {}
     for l in lines:
         ident, line = l.split(' ')
@@ -331,15 +331,8 @@ if __name__ == "__main__":
     dts_comp_support = int(script('dts-comp'))
     db = None
 
-    if "ELIXIR_THREADING" in os.environ:
-        print("using threading")
-        pool_constructor = ThreadPool
-    else:
-        print("not using threading")
-        pool_constructor = Pool
-
-    with pool_constructor() as pool:
-        for tag in scriptLinesGen('list-tags'):
+    with Pool() as pool:
+        for tag in scriptLines('list-tags'):
             if db is None:
                 if "ELIXIR_CACHE" in os.environ:
                     db = DB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, cachesize=(2,0))

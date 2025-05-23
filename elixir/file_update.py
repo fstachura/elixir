@@ -2,8 +2,10 @@ import logging
 import os
 from multiprocessing import cpu_count
 from multiprocessing.pool import ThreadPool, Pool
+import subprocess
 from typing import Tuple
 
+from elixir import data
 from elixir.lib import script, scriptLinesGen, getFileFamily, isIdent, getDataDir, compatibleFamily, compatibleMacro
 from elixir.data import PathList, DefList, RefList, DB
 
@@ -13,6 +15,16 @@ FileId = Tuple[bytes, bytes, bytes]
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
+
+try:
+    os.remove("/tmp/defs")
+except FileNotFoundError: pass
+try:
+    os.remove("/tmp/refs")
+except FileNotFoundError: pass
+
+defs_file = open("/tmp/defs", "a")
+refs_file = open("/tmp/refs", "a")
 
 # Holds databases and update changes that are not commited yet
 class UpdatePartialState:
@@ -31,50 +43,81 @@ class UpdatePartialState:
             return self.db.blob.get(hash)
 
     # Add definitions to database
-    def add_defs(self, defs):
-        for ident, occ_list in defs.items():
-            if self.db.defs.exists(ident):
-                obj = self.db.defs.get(ident)
-            else:
-                obj = DefList()
+    def add_defs(self):
+        p = subprocess.Popen(["sort", "/tmp/defs"], stdout=subprocess.PIPE)
+        current_ident = None
+        data_so_far = []
+        while line := p.stdout.readline():
+            res = line[:-1].split(b" ")
+            ident, idx, type, line, family = res[0].decode(), res[1].decode(), res[2].decode(), \
+                    int(res[3].decode()), res[4].decode()
 
-            if ident in self.def_idents:
-                lines_list = self.def_idents[ident]
-            else:
+            if current_ident is not None and current_ident != ident:
+                if self.db.defs.exists(current_ident):
+                    obj = self.db.defs.get(current_ident)
+                else:
+                    obj = DefList()
+
                 lines_list = []
-                self.def_idents[ident] = lines_list
+                for (idx, type, line, family) in data_so_far:
+                    obj.append(idx, type, line, family)
+                    lines_list.append((idx, line))
 
-            for (idx, type, line, family) in occ_list:
-                obj.append(idx, type, line, family)
-                lines_list.append((idx, line))
+                self.def_idents[current_ident] = lines_list
 
-            self.db.defs.put(ident, obj)
+                self.db.defs.put(current_ident, obj)
+
+                current_ident = ident
+                data_so_far.clear()
+            elif current_ident is None:
+                current_ident = ident
+                data_so_far.append((idx, type, line, family))
+            else:
+                data_so_far.append((idx, type, line, family))
 
     # Add references to database
-    def add_refs(self, refs):
-        for ident, idx_to_lines in refs.items():
-            deflist = self.def_idents.get(ident)
-            if deflist is None:
-                continue
+    def add_refs(self):
+        p = subprocess.Popen(["sort", "/tmp/refs"], stdout=subprocess.PIPE)
+        current_ident = None
+        data_so_far = {}
+        while line := p.stdout.readline():
+            res = line[:-1].split(b" ")
+            ident, idx, family, line = res[0].decode(), res[1].decode(), res[2].decode(), int(res[3].decode())
 
-            def deflist_exists(idx, n):
-                for didx, dn in deflist:
-                    if didx == idx and dn == n:
-                        return True
-                return False
+            if current_ident is not None and current_ident != ident:
+                deflist = self.def_idents.get(current_ident)
+                if deflist is None:
+                    continue
 
-            obj = self.db.refs.get(ident)
-            if obj is None:
-                obj = RefList()
+                def deflist_exists(idx, n):
+                    for didx, dn in deflist:
+                        if didx == idx and dn == n:
+                            return True
+                    return False
 
-            for (idx, family), lines in idx_to_lines.items():
-                lines = [n for n in lines if not deflist_exists(str(idx).encode(), n)]
+                obj = self.db.refs.get(current_ident)
+                if obj is None:
+                    obj = RefList()
 
-                if len(lines) != 0:
-                    lines_str = ','.join((str(n) for n in lines))
-                    obj.append(idx, lines_str, family)
+                for (idx, family), lines in data_so_far.items():
+                    lines = [n for n in lines if not deflist_exists(str(idx).encode(), n)]
 
-            self.db.refs.put(ident, obj)
+                    if len(lines) != 0:
+                        lines_str = ','.join((str(n) for n in lines))
+                        obj.append(idx, lines_str, family)
+
+                self.db.refs.put(current_ident, obj)
+
+                current_ident = ident
+                data_so_far.clear()
+            elif current_ident is None:
+                current_ident = ident
+                data_so_far = {(idx, family): [line]}
+            else:
+                if (idx, family) not in data_so_far:
+                    data_so_far[(idx, family)] = []
+
+                data_so_far[(idx, family)].append(line)
 
     # Add documentation references to database
     def add_docs(self, idx, family, docs):
@@ -177,7 +220,6 @@ def apply_partial_state(state: UpdatePartialState):
 # Collect definitions from ctags for a file
 def get_defs(file_id: FileId):
     idx, hash, filename = file_id
-    defs = {}
     family = getFileFamily(filename)
     if family in [None, 'M']:
         return {}
@@ -189,16 +231,11 @@ def get_defs(file_id: FileId):
         type = type.decode()
         line = int(line.decode())
         if isIdent(ident):
-            if ident not in defs:
-                defs[ident] = []
-            defs[ident].append((idx, type, line, family))
-
-    return defs
+            defs_file.write(f"{ident.decode()} {idx} {type} {line} {family}\n")
 
 # Collect references from the tokenizer for a file
 def get_refs(file_id: FileId):
     idx, hash, filename = file_id
-    refs = {}
     family = getFileFamily(filename)
     if family is None:
         return
@@ -217,18 +254,10 @@ def get_refs(file_id: FileId):
 
             # We only index CONFIG_??? in makefiles
             if (family != 'M' or tok.startswith(b'CONFIG_')):
-                if tok not in refs:
-                    refs[tok] = {}
-
-                if (idx, family) not in refs[tok]:
-                    refs[tok][(idx, family)] = []
-
-                refs[tok][(idx, family)].append(line_num)
+                refs_file.write(f"{tok.decode()} {idx} {family} {line_num}\n")
 
         else:
             line_num += tok.count(b'\1')
-
-    return refs
 
 # Collect compatible script output into reflist-schema compatible format
 def collect_get_blob_output(lines):
@@ -294,9 +323,9 @@ def update_version(db, tag, pool, dts_comp_support):
     chunksize = min(max(1, chunksize), 100)
 
     for result in pool.imap_unordered(get_defs, idxes, chunksize):
-        if result is not None:
-            state.add_defs(result)
+        pass
 
+    state.add_defs()
     logger.info("defs done")
 
     for result in pool.imap_unordered(get_docs, idxes, chunksize):
@@ -319,8 +348,9 @@ def update_version(db, tag, pool, dts_comp_support):
         logger.info("dts comps docs done")
 
     for result in pool.imap_unordered(get_refs, idxes, chunksize):
-        if result is not None:
-            state.add_refs(result)
+        pass
+
+    state.add_refs()
 
     logger.info("refs done")
 
@@ -331,20 +361,10 @@ if __name__ == "__main__":
     dts_comp_support = int(script('dts-comp'))
     db = None
 
-    if "ELIXIR_THREADING" in os.environ:
-        print("using threading")
-        pool_constructor = ThreadPool
-    else:
-        print("not using threading")
-        pool_constructor = Pool
-
-    with pool_constructor() as pool:
+    with ThreadPool() as pool:
         for tag in scriptLinesGen('list-tags'):
             if db is None:
-                if "ELIXIR_CACHE" in os.environ:
-                    db = DB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, cachesize=(2,0))
-                else:
-                    db = DB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False)
+                db = DB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, cachesize=(2,0))
 
             if not db.vers.exists(tag):
                 logger.info("updating tag %s", tag)
