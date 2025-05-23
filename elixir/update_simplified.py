@@ -2,7 +2,7 @@ import logging
 import os
 from multiprocessing import cpu_count
 from multiprocessing.pool import ThreadPool, Pool
-from typing import Tuple
+from typing import Dict, Tuple
 
 from elixir.lib import script, scriptLinesGen, getFileFamily, isIdent, getDataDir, compatibleFamily, compatibleMacro
 from elixir.data import PathList, DefList, RefList, DB
@@ -90,8 +90,8 @@ def add_to_reflist(db_file, idx, family, to_add):
         db_file.put(ident, obj)
 
 
-# NOTE: not thread safe, has to be ran before the actual job is started
-def collect_blobs(db: DB, tag: bytes):
+# Adds blob list to database, returns blob id -> (hash, filename) dict
+def collect_blobs(db: DB, tag: bytes) -> Dict[str, Tuple[str, str]]:
     if db.vars.exists('numBlobs'):
         idx = db.vars.get('numBlobs')
     else:
@@ -114,13 +114,10 @@ def collect_blobs(db: DB, tag: bytes):
             db.file.put(idx, filename)
             idx += 1
 
-    # Reserve ids in blob space - if update is interrupted, as long as all database writes
-    # finished correctly, the changes won't be seen by the application itself.
-    # NOTE: this variable does not represent the actual number of blos in the database now,
-    # just the number of ids reserved for blobs. the space is not guaranteed to be continous
-    # if update job is interrupted or versions are scrubbed from the database.
+    # Update number of blobs in the database
     db.vars.put('numBlobs', idx)
 
+    # Add mapping blob id -> path to version database
     versionBuf.sort()
     obj = PathList()
     for idx, path in versionBuf:
@@ -129,6 +126,7 @@ def collect_blobs(db: DB, tag: bytes):
 
     return idx_to_hash_and_filename
 
+# Generate definitions cache databases
 def generate_defs_caches(db):
     for key in db.defs.get_keys():
         value = db.defs.get(key)
