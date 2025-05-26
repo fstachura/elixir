@@ -3,11 +3,10 @@ import os
 from multiprocessing import cpu_count
 from multiprocessing.pool import ThreadPool, Pool
 import subprocess
-from typing import Tuple
+from typing import Tuple, Dict
 
-from elixir import data
-from elixir.lib import script, scriptLinesGen, getFileFamily, isIdent, getDataDir, compatibleFamily, compatibleMacro
-from elixir.data import PathList, DefList, RefList, DB
+from elixir.lib import script, scriptLines, getFileFamily, isIdent, getDataDir, compatibleFamily, compatibleMacro
+from elixir.data import PathList, DefList, RefList, DB, BsdDB
 
 from find_compatible_dts import FindCompatibleDTS
 
@@ -23,199 +22,172 @@ try:
     os.remove("/tmp/refs")
 except FileNotFoundError: pass
 
-defs_file = open("/tmp/defs", "a")
-refs_file = open("/tmp/refs", "a")
+# Add definitions to database
+def add_defs():
+    if "ELIXIR_CACHE" in os.environ:
+        defs = BsdDB(getDataDir() + '/definitions.db', False, DefList, shared=False, cachesize=(2,0))
+    else:
+        defs = BsdDB(getDataDir() + '/definitions.db', False, DefList, shared=False, cachesize=None)
 
-# Holds databases and update changes that are not commited yet
-class UpdatePartialState:
-    def __init__(self, db, tag, blobs, idx_to_hash_and_filename, hash_to_idx):
-        self.db = db
-        self.tag = tag
-        self.blobs = blobs
-        self.idx_to_hash_and_filename = idx_to_hash_and_filename
-        self.hash_to_idx = hash_to_idx
-        self.def_idents = {}
+    def_idents = {}
+    p = subprocess.Popen(["sort", "--parallel=8", "/tmp/defs"], stdout=subprocess.PIPE)
+    current_ident = None
+    data_so_far = []
+    while line := p.stdout.readline():
+        res = line[:-1].split(b" ")
+        ident, idx, type, line, family = res[0].decode(), res[1].decode(), res[2].decode(), \
+                int(res[3].decode()), res[4].decode()
 
-    def get_idx_from_hash(self, hash):
-        if hash in self.hash_to_idx:
-            return self.hash_to_idx[hash]
+        if current_ident is not None and current_ident != ident:
+            if defs.exists(current_ident):
+                obj = defs.get(current_ident)
+            else:
+                obj = DefList()
+
+            lines_list = []
+            for (idx, type, line, family) in data_so_far:
+                obj.append(idx, type, line, family)
+                lines_list.append((idx, line))
+
+            def_idents[current_ident] = lines_list
+
+            defs.put(current_ident, obj)
+
+            current_ident = ident
+            data_so_far.clear()
+        elif current_ident is None:
+            current_ident = ident
+            data_so_far.append((idx, type, line, family))
         else:
-            return self.db.blob.get(hash)
+            data_so_far.append((idx, type, line, family))
 
-    # Add definitions to database
-    def add_defs(self):
-        p = subprocess.Popen(["sort", "/tmp/defs"], stdout=subprocess.PIPE)
-        current_ident = None
-        data_so_far = []
-        while line := p.stdout.readline():
-            res = line[:-1].split(b" ")
-            ident, idx, type, line, family = res[0].decode(), res[1].decode(), res[2].decode(), \
-                    int(res[3].decode()), res[4].decode()
+    return def_idents
 
-            if current_ident is not None and current_ident != ident:
-                if self.db.defs.exists(current_ident):
-                    obj = self.db.defs.get(current_ident)
-                else:
-                    obj = DefList()
+# Add references to database
+def add_refs(def_idents):
+    if "ELIXIR_CACHE" in os.environ:
+        refs = BsdDB(getDataDir() + '/references.db', False, RefList, shared=False, cachesize=(2,0))
+    else:
+        refs = BsdDB(getDataDir() + '/references.db', False, RefList, shared=False, cachesize=None)
 
-                lines_list = []
-                for (idx, type, line, family) in data_so_far:
-                    obj.append(idx, type, line, family)
-                    lines_list.append((idx, line))
+    p = subprocess.Popen(["sort", "--parallel=8", "/tmp/refs"], stdout=subprocess.PIPE)
+    current_ident = None
+    data_so_far = {}
+    while line := p.stdout.readline():
+        res = line[:-1].split(b" ")
+        ident, idx, family, line = res[0].decode(), res[1].decode(), res[2].decode(), int(res[3].decode())
 
-                self.def_idents[current_ident] = lines_list
-
-                self.db.defs.put(current_ident, obj)
-
+        if current_ident is not None and current_ident != ident:
+            deflist = def_idents.get(current_ident)
+            if deflist is None:
                 current_ident = ident
-                data_so_far.clear()
-            elif current_ident is None:
-                current_ident = ident
-                data_so_far.append((idx, type, line, family))
-            else:
-                data_so_far.append((idx, type, line, family))
+                continue
 
-    # Add references to database
-    def add_refs(self):
-        p = subprocess.Popen(["sort", "/tmp/refs"], stdout=subprocess.PIPE)
-        current_ident = None
-        data_so_far = {}
-        while line := p.stdout.readline():
-            res = line[:-1].split(b" ")
-            ident, idx, family, line = res[0].decode(), res[1].decode(), res[2].decode(), int(res[3].decode())
+            def deflist_exists(idx, n):
+                for didx, dn in deflist:
+                    if didx == idx and dn == n:
+                        return True
+                return False
 
-            if current_ident is not None and current_ident != ident:
-                deflist = self.def_idents.get(current_ident)
-                if deflist is None:
-                    continue
-
-                def deflist_exists(idx, n):
-                    for didx, dn in deflist:
-                        if didx == idx and dn == n:
-                            return True
-                    return False
-
-                obj = self.db.refs.get(current_ident)
-                if obj is None:
-                    obj = RefList()
-
-                for (idx, family), lines in data_so_far.items():
-                    lines = [n for n in lines if not deflist_exists(str(idx).encode(), n)]
-
-                    if len(lines) != 0:
-                        lines_str = ','.join((str(n) for n in lines))
-                        obj.append(idx, lines_str, family)
-
-                self.db.refs.put(current_ident, obj)
-
-                current_ident = ident
-                data_so_far.clear()
-            elif current_ident is None:
-                current_ident = ident
-                data_so_far = {(idx, family): [line]}
-            else:
-                if (idx, family) not in data_so_far:
-                    data_so_far[(idx, family)] = []
-
-                data_so_far[(idx, family)].append(line)
-
-    # Add documentation references to database
-    def add_docs(self, idx, family, docs):
-        self.add_to_reflist(self.db.docs, idx, family, docs)
-
-    # Add compatible references to database
-    def add_comps(self, idx, family, comps):
-        self.add_to_reflist(self.db.comps, idx, family, comps)
-
-    # Add compatible docs to database
-    def add_comps_docs(self, idx, family, comps_docs):
-        comps_result = {}
-        for ident, v in comps_docs.items():
-            if self.db.comps.exists(ident):
-                comps_result[ident] = v
-
-        self.add_to_reflist(self.db.comps_docs, idx, family, comps_result)
-
-    # Add data to database file that uses reflist schema
-    def add_to_reflist(self, db_file, idx, family, to_add):
-        for ident, lines in to_add.items():
-            if db_file.exists(ident):
-                obj = db_file.get(ident)
-            else:
+            obj = refs.get(current_ident)
+            if obj is None:
                 obj = RefList()
 
-            lines_str = ','.join((str(n) for n in lines))
-            obj.append(idx, lines_str, family)
-            db_file.put(ident, obj)
+            for (idx, family), lines in data_so_far.items():
+                lines = [n for n in lines if not deflist_exists(str(idx).encode(), n)]
 
-    def generate_defs_caches(self):
-        for key in self.db.defs.get_keys():
-            value = self.db.defs.get(key)
-            for family in ['C', 'K', 'D', 'M']:
-                if (compatibleFamily(value.get_families(), family) or
-                            compatibleMacro(value.get_macros(), family)):
-                    self.db.defs_cache[family].put(key, b'')
+                if len(lines) != 0:
+                    lines_str = ','.join((str(n) for n in lines))
+                    obj.append(idx, lines_str, family)
+
+            refs.put(current_ident, obj)
+
+            current_ident = ident
+            data_so_far.clear()
+        elif current_ident is None:
+            current_ident = ident
+            data_so_far = {(idx, family): [line]}
+        else:
+            if (idx, family) not in data_so_far:
+                data_so_far[(idx, family)] = []
+
+            data_so_far[(idx, family)].append(line)
+
+# Add documentation references to database
+def add_docs(db, idx, family, docs):
+    add_to_reflist(db.docs, idx, family, docs)
+
+# Add compatible references to database
+def add_comps(db, idx, family, comps):
+    add_to_reflist(db.comps, idx, family, comps)
+
+# Add compatible docs to database
+def add_comps_docs(db, idx, family, comps_docs):
+    comps_result = {}
+    for ident, v in comps_docs.items():
+        if db.comps.exists(ident):
+            comps_result[ident] = v
+
+    add_to_reflist(db.comps_docs, idx, family, comps_result)
+
+# Add data to database file that uses reflist schema
+def add_to_reflist(db_file, idx, family, to_add):
+    for ident, lines in to_add.items():
+        if db_file.exists(ident):
+            obj = db_file.get(ident)
+        else:
+            obj = RefList()
+
+        lines_str = ','.join((str(n) for n in lines))
+        obj.append(idx, lines_str, family)
+        db_file.put(ident, obj)
 
 
-# NOTE: not thread safe, has to be ran before the actual job is started
-# Builds UpdatePartialState
-def build_partial_state(db: DB, tag: bytes):
+# Adds blob list to database, returns blob id -> (hash, filename) dict
+def collect_blobs(db: DB, tag: bytes) -> Dict[str, Tuple[str, str]]:
     if db.vars.exists('numBlobs'):
         idx = db.vars.get('numBlobs')
     else:
         idx = 0
 
     # Get blob hashes and associated file names (without path)
-    blobs = scriptLinesGen('list-blobs', '-f', tag)
-
+    blobs = scriptLines('list-blobs', '-f', tag)
+    versionBuf = []
     idx_to_hash_and_filename = {}
-    hash_to_idx = {}
 
     # Collect new blobs, assign database ids to the blobs
     for blob in blobs:
         hash, filename = blob.split(b' ',maxsplit=1)
         blob_exist = db.blob.exists(hash)
+        versionBuf .append((idx, filename))
         if not blob_exist:
-            hash_to_idx[hash] = idx
             idx_to_hash_and_filename[idx] = (hash, filename.decode())
+            db.blob.put(hash, idx)
+            db.hash.put(idx, hash)
+            db.file.put(idx, filename)
             idx += 1
 
-    # Reserve ids in blob space - if update is interrupted, as long as all database writes
-    # finished correctly, the changes won't be seen by the application itself.
-    # NOTE: this variable does not represent the actual number of blos in the database now,
-    # just the number of ids reserved for blobs. the space is not guaranteed to be continous
-    # if update job is interrupted or versions are scrubbed from the database.
+    # Update number of blobs in the database
     db.vars.put('numBlobs', idx)
 
-    return UpdatePartialState(db, tag, blobs, idx_to_hash_and_filename, hash_to_idx)
-
-# NOTE: not thread safe, has to be ran after job is finished
-# Applies changes from partial update state - mainly to hash, file, blob and versions databases
-# It is assumed that indexes not present in versions are ignored
-def apply_partial_state(state: UpdatePartialState):
-    for idx, (hash, filename) in state.idx_to_hash_and_filename.items():
-        state.db.hash.put(idx, hash)
-        state.db.file.put(idx, filename)
-
-    for hash, idx in state.hash_to_idx.items():
-        state.db.blob.put(hash, idx)
-
-    # Update versions
-    buf = []
-
-    for blob in state.blobs:
-        hash, path = blob.split(b' ', maxsplit=1)
-        idx = state.get_idx_from_hash(hash)
-        buf.append((idx, path))
-
-    buf.sort()
+    # Add mapping blob id -> path to version database
+    versionBuf.sort()
     obj = PathList()
-    for idx, path in buf:
+    for idx, path in versionBuf:
         obj.append(idx, path)
+    db.vers.put(tag, obj, sync=True)
 
-    state.db.vers.put(state.tag, obj, sync=True)
-    state.generate_defs_caches()
+    return idx_to_hash_and_filename
 
+# Generate definitions cache databases
+def generate_defs_caches(db):
+    defs = BsdDB(getDataDir() + '/definitions.db', False, DefList, shared=False, cachesize=(2,0))
+    for key in defs.get_keys():
+        value = defs.get(key)
+        for family in ['C', 'K', 'D', 'M']:
+            if (compatibleFamily(value.get_families(), family) or
+                        compatibleMacro(value.get_macros(), family)):
+                db.defs_cache[family].put(key, b'')
 
 # Collect definitions from ctags for a file
 def get_defs(file_id: FileId):
@@ -224,14 +196,15 @@ def get_defs(file_id: FileId):
     if family in [None, 'M']:
         return {}
 
-    lines = scriptLinesGen('parse-defs', hash, filename, family)
+    lines = scriptLines('parse-defs', hash, filename, family)
 
-    for l in lines:
-        ident, type, line = l.split(b' ')
-        type = type.decode()
-        line = int(line.decode())
-        if isIdent(ident):
-            defs_file.write(f"{ident.decode()} {idx} {type} {line} {family}\n")
+    with open("/tmp/defs", "a") as defs_file:
+        for l in lines:
+            ident, type, line = l.split(b' ')
+            type = type.decode()
+            line = int(line.decode())
+            if isIdent(ident):
+                defs_file.write(f"{ident.decode()} {idx} {type} {line} {family}\n")
 
 # Collect references from the tokenizer for a file
 def get_refs(file_id: FileId):
@@ -243,21 +216,22 @@ def get_refs(file_id: FileId):
     # Kconfig values are saved as CONFIG_<value>
     prefix = b'' if family != 'K' else b'CONFIG_'
 
-    tokens = scriptLinesGen('tokenize-file', '-b', hash, family)
+    tokens = scriptLines('tokenize-file', '-b', hash, family)
     even = True
     line_num = 1
 
-    for tok in tokens:
-        even = not even
-        if even:
-            tok = prefix + tok
+    with open("/tmp/refs", "a") as refs_file:
+        for tok in tokens:
+            even = not even
+            if even:
+                tok = prefix + tok
 
-            # We only index CONFIG_??? in makefiles
-            if (family != 'M' or tok.startswith(b'CONFIG_')):
-                refs_file.write(f"{tok.decode()} {idx} {family} {line_num}\n")
+                # We only index CONFIG_??? in makefiles
+                if (family != 'M' or tok.startswith(b'CONFIG_')):
+                    refs_file.write(f"{tok.decode()} {idx} {family} {line_num}\n")
 
-        else:
-            line_num += tok.count(b'\1')
+            else:
+                line_num += tok.count(b'\1')
 
 # Collect compatible script output into reflist-schema compatible format
 def collect_get_blob_output(lines):
@@ -278,7 +252,7 @@ def get_docs(file_id: FileId):
     family = getFileFamily(filename)
     if family in [None, 'M']: return
 
-    lines = (line.decode() for line in scriptLinesGen('parse-docs', hash, filename))
+    lines = (line.decode() for line in scriptLines('parse-docs', hash, filename))
     docs = collect_get_blob_output(lines)
 
     return (idx, family, docs)
@@ -290,7 +264,7 @@ def get_comps(file_id: FileId):
     if family in [None, 'K', 'M']: return
 
     compatibles_parser = FindCompatibleDTS()
-    lines = compatibles_parser.run(scriptLinesGen('get-blob', hash), family)
+    lines = compatibles_parser.run(scriptLines('get-blob', hash), family)
     comps = collect_get_blob_output(lines)
 
     return (idx, family, comps)
@@ -301,7 +275,7 @@ def get_comps_docs(file_id: FileId):
     family = 'B'
 
     compatibles_parser = FindCompatibleDTS()
-    lines = compatibles_parser.run(scriptLinesGen('get-blob', hash), family)
+    lines = compatibles_parser.run(scriptLines('get-blob', hash), family)
     comps_docs = {}
     for l in lines:
         ident, line = l.split(' ')
@@ -315,60 +289,84 @@ def get_comps_docs(file_id: FileId):
 
 # Update a single version - collects data from all the stages and saves it in the database
 def update_version(db, tag, pool, dts_comp_support):
-    state = build_partial_state(db, tag)
+    idx_to_hash_and_filename = collect_blobs(db, tag)
+    def_idents = {}
 
     # Collect blobs to process and split list of blobs into chunks
-    idxes = [(idx, hash, filename) for (idx, (hash, filename)) in state.idx_to_hash_and_filename.items()]
+    idxes = [(idx, hash, filename) for (idx, (hash, filename)) in idx_to_hash_and_filename.items()]
     chunksize = int(len(idxes) / cpu_count())
     chunksize = min(max(1, chunksize), 100)
+
+    # will be opened from another process
+    db.defs.close()
+    db.refs.close()
+
+    collect_blobs(db, tag)
+    logger.info("collecting blobs done")
 
     for result in pool.imap_unordered(get_defs, idxes, chunksize):
         pass
 
-    state.add_defs()
+    def_idents_obj = pool.apply_async(add_defs)
+
     logger.info("defs done")
 
     for result in pool.imap_unordered(get_docs, idxes, chunksize):
         if result is not None:
-            state.add_docs(*result)
+            add_docs(db, *result)
 
     logger.info("docs done")
 
     if dts_comp_support:
         for result in pool.imap_unordered(get_comps, idxes, chunksize):
             if result is not None:
-                state.add_comps(*result)
+                add_comps(db, *result)
 
         logger.info("dts comps done")
 
         for result in pool.imap_unordered(get_comps_docs, idxes, chunksize):
             if result is not None:
-                state.add_comps_docs(*result)
+                add_comps_docs(db, *result)
 
         logger.info("dts comps docs done")
 
     for result in pool.imap_unordered(get_refs, idxes, chunksize):
         pass
 
-    state.add_refs()
+    def_idents = def_idents_obj.get()
+
+    add_refs(def_idents)
 
     logger.info("refs done")
 
-    logger.info("update done, applying partial state")
-    apply_partial_state(state)
+    generate_defs_caches(db)
+    logger.info("update done")
+
 
 if __name__ == "__main__":
     dts_comp_support = int(script('dts-comp'))
     db = None
 
-    with ThreadPool() as pool:
-        for tag in scriptLinesGen('list-tags'):
+    if "ELIXIR_THREADING" in os.environ:
+        print("using threading")
+        pool_constructor = ThreadPool
+    else:
+        print("not using threading")
+        pool_constructor = Pool
+
+    with pool_constructor() as pool:
+        for tag in scriptLines('list-tags'):
             if db is None:
-                db = DB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, cachesize=(2,0))
+                if "ELIXIR_CACHE" in os.environ:
+                    db = DB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, cachesize=(2,0))
+                else:
+                    db = DB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False)
 
             if not db.vers.exists(tag):
                 logger.info("updating tag %s", tag)
                 update_version(db, tag, pool, dts_comp_support)
                 db.close()
                 db = None
+                break
+
 
