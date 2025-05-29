@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 from multiprocessing import cpu_count
 from multiprocessing.pool import ThreadPool, Pool
 import subprocess
@@ -16,10 +17,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(mes
 logger = logging.getLogger(__name__)
 
 try:
-    os.remove("/tmp/defs")
+    os.remove(getDataDir() + "/defs")
 except FileNotFoundError: pass
 try:
-    os.remove("/tmp/refs")
+    os.remove(getDataDir() + "/refs")
 except FileNotFoundError: pass
 
 # Add definitions to database
@@ -30,7 +31,7 @@ def add_defs():
         defs = BsdDB(getDataDir() + '/definitions.db', False, DefList, shared=False, cachesize=None)
 
     def_idents = {}
-    p = subprocess.Popen(["sort", "--parallel=8", "/tmp/defs"], stdout=subprocess.PIPE)
+    p = subprocess.Popen(["sort", "--parallel=8", getDataDir() + "/defs"], stdout=subprocess.PIPE)
     current_ident = None
     data_so_far = []
     while line := p.stdout.readline():
@@ -70,7 +71,7 @@ def add_refs(def_idents):
     else:
         refs = BsdDB(getDataDir() + '/references.db', False, RefList, shared=False, cachesize=None)
 
-    p = subprocess.Popen(["sort", "--parallel=8", "/tmp/refs"], stdout=subprocess.PIPE)
+    p = subprocess.Popen(["sort", "--parallel=8", getDataDir() + "/refs"], stdout=subprocess.PIPE)
     current_ident = None
     data_so_far = {}
     while line := p.stdout.readline():
@@ -198,7 +199,7 @@ def get_defs(file_id: FileId):
 
     lines = scriptLines('parse-defs', hash, filename, family)
 
-    with open("/tmp/defs", "a") as defs_file:
+    with open(getDataDir() + "/defs", "a") as defs_file:
         for l in lines:
             ident, type, line = l.split(b' ')
             type = type.decode()
@@ -220,7 +221,7 @@ def get_refs(file_id: FileId):
     even = True
     line_num = 1
 
-    with open("/tmp/refs", "a") as refs_file:
+    with open(getDataDir() + "/refs", "a") as refs_file:
         for tok in tokens:
             even = not even
             if even:
@@ -335,9 +336,10 @@ def update_version(db, tag, pool, dts_comp_support):
 
     def_idents = def_idents_obj.get()
 
+    start = time.time()
     add_refs(def_idents)
 
-    logger.info("refs done")
+    logger.info("refs done " + str(time.time()-start))
 
     generate_defs_caches(db)
     logger.info("update done")

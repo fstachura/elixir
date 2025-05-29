@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 from multiprocessing import cpu_count
 from multiprocessing.pool import ThreadPool, Pool
 from typing import Dict, Tuple
@@ -256,42 +257,57 @@ def update_version(db, tag, pool, dts_comp_support):
     chunksize = int(len(idxes) / cpu_count())
     chunksize = min(max(1, chunksize), 100)
 
+    start = time.time()
+
     collect_blobs(db, tag)
-    logger.info("collecting blobs done")
+    logger.info("collecting blobs done %s", time.time()-start)
+
+    start = time.time()
 
     for result in pool.imap_unordered(get_defs, idxes, chunksize):
         if result is not None:
             add_defs(db, def_idents, result)
 
-    logger.info("defs done")
+    logger.info("defs done %s", time.time()-start)
+
+    start = time.time()
 
     for result in pool.imap_unordered(get_docs, idxes, chunksize):
         if result is not None:
             add_docs(db, *result)
 
-    logger.info("docs done")
+    logger.info("docs done %s", time.time()-start)
 
     if dts_comp_support:
+
+        start = time.time()
+
         for result in pool.imap_unordered(get_comps, idxes, chunksize):
             if result is not None:
                 add_comps(db, *result)
 
-        logger.info("dts comps done")
+        logger.info("dts comps done %s", time.time()-start)
+
+        start = time.time()
 
         for result in pool.imap_unordered(get_comps_docs, idxes, chunksize):
             if result is not None:
                 add_comps_docs(db, *result)
 
-        logger.info("dts comps docs done")
+        logger.info("dts comps docs done %s", time.time()-start)
+
+    start = time.time()
 
     for result in pool.imap_unordered(get_refs, idxes, chunksize):
         if result is not None:
             add_refs(db, def_idents, result)
 
-    logger.info("refs done")
+    logger.info("refs done %s", time.time()-start)
+
+    start = time.time()
 
     generate_defs_caches(db)
-    logger.info("update done")
+    logger.info("update done %s", time.time()-start)
 
 
 if __name__ == "__main__":

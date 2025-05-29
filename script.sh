@@ -250,7 +250,7 @@ case $cmd in
             list_tags_h
         else
             list_tags
-        fi
+        fi | head -n1
         ;;
 
     get-latest-tags)

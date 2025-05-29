@@ -1,5 +1,6 @@
 import logging
 import os
+import time
 from multiprocessing import cpu_count
 from multiprocessing.pool import ThreadPool, Pool
 from typing import Tuple
@@ -286,46 +287,64 @@ def get_comps_docs(file_id: FileId):
 
 # Update a single version - collects data from all the stages and saves it in the database
 def update_version(db, tag, pool, dts_comp_support):
+    start = time.time()
+
     state = build_partial_state(db, tag)
+
+    logger.info("building partial state done %s", time.time()-start)
 
     # Collect blobs to process and split list of blobs into chunks
     idxes = [(idx, hash, filename) for (idx, (hash, filename)) in state.idx_to_hash_and_filename.items()]
     chunksize = int(len(idxes) / cpu_count())
     chunksize = min(max(1, chunksize), 100)
 
+    start = time.time()
+
     for result in pool.imap_unordered(get_defs, idxes, chunksize):
         if result is not None:
             state.add_defs(result)
 
-    logger.info("defs done")
+    logger.info("defs done %s", time.time()-start)
+
+    start = time.time()
 
     for result in pool.imap_unordered(get_docs, idxes, chunksize):
         if result is not None:
             state.add_docs(*result)
 
-    logger.info("docs done")
+    logger.info("docs done %s", time.time()-start)
 
     if dts_comp_support:
+        start = time.time()
+
         for result in pool.imap_unordered(get_comps, idxes, chunksize):
             if result is not None:
                 state.add_comps(*result)
 
-        logger.info("dts comps done")
+        logger.info("dts comps done %s", time.time()-start)
+
+        start = time.time()
 
         for result in pool.imap_unordered(get_comps_docs, idxes, chunksize):
             if result is not None:
                 state.add_comps_docs(*result)
 
-        logger.info("dts comps docs done")
+        logger.info("dts comps docs done %s", time.time()-start)
+
+    start = time.time()
 
     for result in pool.imap_unordered(get_refs, idxes, chunksize):
         if result is not None:
             state.add_refs(result)
 
-    logger.info("refs done")
+    logger.info("refs done %s", time.time()-start)
+
+    start = time.time()
 
     logger.info("update done, applying partial state")
     apply_partial_state(state)
+
+    logger.info("update done %s", time.time()-start)
 
 if __name__ == "__main__":
     dts_comp_support = int(script('dts-comp'))
