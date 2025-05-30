@@ -22,11 +22,21 @@ from .lib import script, scriptLines, decode
 from . import lib
 from . import data
 import os
-import sys
 from collections import OrderedDict
 from urllib import parse
+from collections import namedtuple
+from typing import List, Literal, Tuple
 
 from io import BytesIO
+
+# Single continuous diff change
+# _start - start line counting from 0
+# _changed - number of lines changed, left_changed = 0 if type in ('+', '-')
+# Type:
+# -: removed from right file
+# +: added to right file
+# =: lines changed in both files
+DiffEntry = namedtuple('DiffEntry', 'type, left_start, left_changed, right_start, right_changed')
 
 class SymbolInstance(object):
     def __init__(self, path, line, type=None):
@@ -199,21 +209,22 @@ class Query:
         # return the oldest tag, even if it does not exist in the database
         return sorted_tags[-1].decode()
 
-    def get_diff(self, version, version_other, path):
+    # Returns a diff between a file in two versions
+    def get_diff(self, version: str, version_other: str, path: str) -> List[DiffEntry]:
         data = decode(self.script('get-diff', version, version_other, path)).split('\n')
         result = []
         for line in data:
             if len(line) == 0:
                 continue
             elif line[0] == '+':
-                line_num_left, line_num_right, changes = line[1:].split(':')
-                result.append(('+', int(line_num_left), int(line_num_right), int(changes)))
+                left_start, right_start, changes = line[1:].split(':')
+                result.append(DiffEntry('+', int(left_start), 0, int(right_start), int(changes)))
             elif line[0] == '-':
-                line_num_left, line_num_right, changes = line[1:].split(':')
-                result.append(('-', int(line_num_left), int(line_num_right), int(changes)))
+                left_start, right_start, changes = line[1:].split(':')
+                result.append(DiffEntry('-', int(left_start), 0, int(right_start), int(changes)))
             elif line[0] == '=':
-                line_num, changes, other_line_num, other_changes = line[1:].split(':')
-                result.append(('=', int(line_num), int(changes), int(other_line_num), int(other_changes)))
+                left_start, left_changed, right_start, right_changed = line[1:].split(':')
+                result.append(DiffEntry('=', int(left_start), int(left_changed), int(right_start), int(right_changed)))
             else:
                 raise Exception("Invalid line in get-diff: " + line)
         return result
