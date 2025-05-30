@@ -1,6 +1,6 @@
 import re
 from typing import List
-from .utils import Filter, FilterContext, encode_number, decode_number, extension_matches
+from .utils import Filter, FilterContext, encode_number, decode_number, extension_matches, format_source_link
 
 # Filters for cpp includes like these:
 # #include <file>
@@ -42,7 +42,7 @@ class CppPathIncFilter(Filter):
             for p in self.prefix_path:
                 path = f"/{p}/{w}"
                 if ctx.query.file_exists(ctx.tag, path):
-                    return f'<a href="{ ctx.get_absolute_source_url(path) }">{ w }</a>'
+                    return format_source_link(ctx.get_absolute_source_url(path), w)
             return w
 
         return re.sub('__KEEPCPPPATHINC__([A-J]+)', replace_cpppathinc, html, flags=re.MULTILINE)
