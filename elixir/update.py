@@ -1,6 +1,6 @@
 import os.path
 import logging
-from multiprocessing import cpu_count
+from multiprocessing import cpu_count, set_start_method
 from multiprocessing.pool import Pool
 from typing import Dict, Iterable, List, Optional, Tuple, Set
 
@@ -38,17 +38,13 @@ LinesListDict = Dict[str, List[int]]
 IdxCache = Dict[int, Tuple[bytes, str, bool]]
 
 # Check if definition for ident is visible in current version
-def def_in_version(db: DB, def_cache: Set[bytes], idx_to_hash_and_filename: IdxCache, ident: bytes) -> bool:
-    if ident in def_cache:
-        return True
-
+def def_in_version(db: DB, idx_to_hash_and_filename: IdxCache, ident: bytes) -> bool:
     defs_this_ident = db.defs.get(ident)
     if not defs_this_ident:
         return False
 
     for def_idx, _, _, _ in defs_this_ident.iter():
         if def_idx in idx_to_hash_and_filename:
-            def_cache.add(ident)
             return True
 
     return False
@@ -66,12 +62,12 @@ def add_defs(db: DB, defs: DefsDict):
         db.defs.put(ident, obj)
 
 # Add references to database
-def add_refs(db: DB, def_cache: Set[bytes], idx_to_hash_and_filename: IdxCache, refs: RefsDict):
+def add_refs(db: DB, idx_to_hash_and_filename: IdxCache, refs: RefsDict):
     for ident, idx_to_lines in refs.items():
         # Skip reference if definition was not collected in this tag
         deflist = def_cache.get(ident)
         always_indexed = ident in always_indexed_tokens
-        in_version = def_in_version(db, def_cache, idx_to_hash_and_filename, ident)
+        in_version = def_in_version(db, idx_to_hash_and_filename, ident)
         valid_prefix = any(ident.startswith(pref) for pref in always_indexed_prefixes)
         if (deflist is None or not in_version) and not (always_indexed or valid_prefix):
             continue
@@ -328,10 +324,9 @@ def update_version(db: DB, tag: bytes, pool: Pool, dts_comp_support: bool):
 
         logger.info("dts comps docs done")
 
-    def_cache = set()
     for result in pool.imap_unordered(get_refs, idxes, chunksize):
         if result is not None:
-            add_refs(db, def_cache, idx_to_hash_and_filename, result)
+            add_refs(db, idx_to_hash_and_filename, result)
 
     logger.info("refs done")
 
@@ -342,10 +337,11 @@ if __name__ == "__main__":
     dts_comp_support = bool(int(script('dts-comp')))
     db = None
 
+    set_start_method('spawn')
     with Pool() as pool:
         for tag in scriptLines('list-tags'):
             if db is None:
-                db = DB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, update_cache=True)
+                db = DB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, update_cache=50000)
 
             if not db.vers.exists(tag):
                 logger.info("updating tag %s", tag)
