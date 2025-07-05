@@ -1,12 +1,17 @@
 import os.path
 import logging
+import time
+import signal
+import bisect
+import cProfile
 from multiprocessing import cpu_count, set_start_method
 from multiprocessing.pool import Pool
-from typing import Dict, Iterable, List, Optional, Tuple, Set
+from typing import Dict, Iterable, List, Optional, Tuple
+from collections import OrderedDict
 
 from find_compatible_dts import FindCompatibleDTS
 
-from elixir.data import DB, BsdDB, DefList, PathList, RefList
+from elixir.data import DB, BsdDB, CachedBsdDB, DefList, PathList, RefList
 from elixir.lib import (
     compatibleFamily,
     compatibleMacro,
@@ -37,16 +42,35 @@ LinesListDict = Dict[str, List[int]]
 # File idx -> (hash, filename, is a new file?)
 IdxCache = Dict[int, Tuple[bytes, str, bool]]
 
-# Check if definition for ident is visible in current version
-def def_in_version(db: DB, idx_to_hash_and_filename: IdxCache, ident: bytes) -> bool:
-    defs_this_ident = db.defs.get(ident)
-    if not defs_this_ident:
-        return False
+class Cache:
+    def __init__(self, size):
+        self.cache = OrderedDict()
+        self.size = size
 
-    for def_idx, _, _, _ in defs_this_ident.iter():
+    def contains(self, key):
+        return key in self.cache
+
+    def get(self, key):
+        self.cache.move_to_end(key)
+        return self.cache[key]
+
+    def put(self, key, val):
+        self.cache[key] = val
+        self.cache.move_to_end(key)
+        if len(self.cache) > self.size:
+            self.cache.popitem(last=False)
+
+# Check if definition for ident is visible in current version
+def def_in_version(def_ident: DefList, idx_to_hash_and_filename: IdxCache) -> bool:
+    def_ident.populate_entries()
+
+    prev_idx = None
+    for def_idx, _, _, _ in reversed(def_ident.entries):
+        if def_idx == prev_idx:
+            continue
         if def_idx in idx_to_hash_and_filename:
             return True
-
+        prev_idx = def_idx
     return False
 
 # Add definitions to database
@@ -62,14 +86,24 @@ def add_defs(db: DB, defs: DefsDict):
         db.defs.put(ident, obj)
 
 # Add references to database
-def add_refs(db: DB, idx_to_hash_and_filename: IdxCache, refs: RefsDict):
+def add_refs(db: DB, in_ver_cache: Cache, idx_to_hash_and_filename: IdxCache, refs: RefsDict):
     for ident, idx_to_lines in refs.items():
         # Skip reference if definition was not collected in this tag
         deflist = def_cache.get(ident)
         always_indexed = ident in always_indexed_tokens
-        in_version = def_in_version(db, idx_to_hash_and_filename, ident)
+        in_version_dec = True
+
+        if not in_ver_cache.contains(ident):
+            in_version = def_in_version(deflist, idx_to_hash_and_filename)
+            if not in_version:
+                in_ver_cache.put(ident, False)
+                in_version_dec = False
+            in_ver_cache.put(ident, True)
+        elif not in_ver_cache.get(ident):
+            in_version_dec = False
+
         valid_prefix = any(ident.startswith(pref) for pref in always_indexed_prefixes)
-        if (deflist is None or not in_version) and not (always_indexed or valid_prefix):
+        if (deflist is None or not in_version_dec) and not (always_indexed or valid_prefix):
             continue
 
         def deflist_exists(idx: int, line: int):
@@ -86,17 +120,10 @@ def add_refs(db: DB, idx_to_hash_and_filename: IdxCache, refs: RefsDict):
         if obj is None:
             obj = RefList()
 
-        modified = False
-        for (idx, family), lines in idx_to_lines.items():
-            lines = [n for n in lines if not deflist_exists(idx, n)]
+        for (idx, family), lines_str in idx_to_lines.items():
+            obj.append(idx, lines_str, family)
 
-            if len(lines) != 0:
-                lines_str = ','.join((str(n) for n in lines))
-                obj.append(idx, lines_str, family)
-                modified = True
-
-        if modified:
-            db.refs.put(ident, obj)
+        db.refs.put(ident, obj)
 
 # Add documentation references to database
 def add_docs(db: DB, idx: int, family: str, docs: Dict[str, List[int]]):
@@ -199,8 +226,11 @@ def get_defs(file_id: FileId) -> Optional[DefsDict]:
 
     return defs
 
+def call_get_refs(arg: Tuple[FileId, str]) -> Optional[RefsDict]:
+    return get_refs(arg[0], CachedBsdDB(arg[1], True, DefList, 1000))
+
 # Collect references from the tokenizer for a file
-def get_refs(file_id: FileId) -> Optional[RefsDict]:
+def get_refs(file_id: FileId, defs: CachedBsdDB) -> Optional[RefsDict]:
     idx, hash, filename = file_id
     refs = {}
     family = getFileFamily(filename)
@@ -214,6 +244,19 @@ def get_refs(file_id: FileId) -> Optional[RefsDict]:
     even = True
     line_num = 1
 
+    def deflist_exists(deflist, idx: int, line: int):
+        deflist.populate_entries()
+        start = bisect.bisect_left(deflist.entries, idx, key=lambda x: x[0])
+
+        for def_idx, _, def_line, _ in deflist.entries[start:]:
+            if def_idx == idx:
+                if def_line == line:
+                    return True
+            else:
+                break
+
+        return False
+
     for tok in tokens:
         even = not even
         if even:
@@ -221,16 +264,24 @@ def get_refs(file_id: FileId) -> Optional[RefsDict]:
 
             # We only index CONFIG_??? in makefiles
             if (family != 'M' or tok.startswith(b'CONFIG_')):
+                deflist = defs.get(tok)
+                if not deflist:
+                    continue
+
+                if deflist_exists(deflist, idx, line_num):
+                    continue
+
                 if tok not in refs:
                     refs[tok] = {}
 
                 if (idx, family) not in refs[tok]:
-                    refs[tok][(idx, family)] = []
-
-                refs[tok][(idx, family)].append(line_num)
+                    refs[tok][(idx, family)] = str(line_num)
+                else:
+                    refs[tok][(idx, family)] += "," + str(line_num)
 
         else:
             line_num += tok.count(b'\1')
+
 
     return refs
 
@@ -253,7 +304,13 @@ def get_docs(file_id: FileId) -> Optional[Tuple[int, str, LinesListDict]]:
     family = getFileFamily(filename)
     if family in (None, 'M'): return
 
+    start = time.time()
     lines = (line.decode() for line in scriptLines('parse-docs', hash, filename))
+    parser_time = time.time()-start
+
+    if parser_time > 10:
+        print("docs timeout", parser_time, file_id)
+
     docs = collect_get_blob_output(lines)
 
     return (idx, family, docs)
@@ -265,7 +322,14 @@ def get_comps(file_id: FileId) -> Optional[Tuple[int, str, LinesListDict]]:
     if family in (None, 'K', 'M'): return
 
     compatibles_parser = FindCompatibleDTS()
+
+    start = time.time()
     lines = compatibles_parser.run(scriptLines('get-blob', hash), family)
+    parser_time = time.time()-start
+
+    if parser_time > 10:
+        print("comps docs timeout", parser_time, file_id)
+
     comps = collect_get_blob_output(lines)
 
     return (idx, family, comps)
@@ -297,7 +361,7 @@ def update_version(db: DB, tag: bytes, pool: Pool, dts_comp_support: bool):
     chunksize = int(len(idxes) / cpu_count())
     chunksize = min(max(1, chunksize), 100)
 
-    logger.info("collecting blobs done")
+    logger.info("collecting blobs done, new blobs: %d", len(idxes))
 
     for result in pool.imap_unordered(get_defs, idxes, chunksize):
         if result is not None:
@@ -312,7 +376,10 @@ def update_version(db: DB, tag: bytes, pool: Pool, dts_comp_support: bool):
     logger.info("docs done")
 
     if dts_comp_support:
-        for result in pool.imap_unordered(get_comps, idxes, chunksize):
+        comp_idxes = [idx for idx in idxes if getFileFamily(idx[2]) not in (None, 'K', 'M')]
+        comp_chunksize = int(len(comp_idxes) / cpu_count())
+        comp_chunksize = min(max(1, comp_chunksize), 100)
+        for result in pool.imap_unordered(get_comps, comp_idxes, comp_chunksize):
             if result is not None:
                 add_comps(db, *result)
 
@@ -324,28 +391,68 @@ def update_version(db: DB, tag: bytes, pool: Pool, dts_comp_support: bool):
 
         logger.info("dts comps docs done")
 
-    for result in pool.imap_unordered(get_refs, idxes, chunksize):
+
+    #with cProfile.Profile() as pr:
+    db.defs.close()
+    db.defs.readonly = True
+    db.defs.open()
+
+    in_def_cache = Cache(10000)
+    ref_idxes = [(idx, db.defs.filename) for idx in idxes]
+    ref_chunksize = int(len(ref_idxes) / cpu_count())
+    ref_chunksize = min(max(1, ref_chunksize), 100)
+        #pr.dump_stats("5refs"+str(int(time.time())))
+
+    logger.info("ref blobs: %d", len(ref_idxes))
+
+    for result in pool.imap_unordered(call_get_refs, ref_idxes, ref_chunksize):
         if result is not None:
-            add_refs(db, idx_to_hash_and_filename, result)
+            add_refs(db, in_def_cache, idx_to_hash_and_filename, result)
+
+    db.defs.close()
+    db.defs.readonly = False
+    db.defs.open()
 
     logger.info("refs done")
-
-    generate_defs_caches(db)
     logger.info("update done")
 
+
+sigint_caught = False
+
+def sigint_handler(signum, _frame):
+    global sigint_caught
+    if not sigint_caught:
+        logger.info("Caught SIGINT... the script will exit after processing this version")
+        signal.signal(signum, signal.SIG_IGN)
+        sigint_caught = True
+
+signal.signal(signal.SIGINT, sigint_handler)
+
+def ignore_sigint():
+    signal.signal(signal.SIGINT, lambda _,__: None)
+
 if __name__ == "__main__":
+
     dts_comp_support = bool(int(script('dts-comp')))
-    db = None
+    db = DB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, update_cache=100000)
 
     set_start_method('spawn')
-    with Pool() as pool:
+    with Pool(initializer=ignore_sigint) as pool:
         for tag in scriptLines('list-tags'):
-            if db is None:
-                db = DB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, update_cache=50000)
+            #if not tag.startswith(b'v6'):
+            #    continue
+
+            if sigint_caught:
+                break
 
             if not db.vers.exists(tag):
                 logger.info("updating tag %s", tag)
                 update_version(db, tag, pool, dts_comp_support)
-                db.close()
-                db = None
+
+    logger.info("generating def caches")
+    generate_defs_caches(db)
+    logger.info("def caches generated")
+    db.close()
+    logger.info("database closed")
+
 
