@@ -21,6 +21,7 @@
 from typing import OrderedDict
 import berkeleydb
 import re
+import time
 from . import lib
 from .lib import autoBytes
 import os
@@ -65,51 +66,86 @@ class DefList:
     def __init__(self, data=b'#'):
         self.data, self.families = data.split(b'#')
 
+        self.modified = False
+        self.entries = None
+        self.to_append = []
+
+    def populate_entries(self):
+        entries_modified = False
+        if self.entries is None:
+            self.entries = [
+                (int(d[0]), d[1], int(d[2]), d[3])
+                for d in deflist_regex.findall(self.data)
+            ]
+            entries_modified = True
+
+        if len(self.to_append) != 0:
+            self.entries += self.to_append
+            self.to_append = []
+            entries_modified = True
+
+        if entries_modified:
+            self.entries.sort(key=lambda x:int(x[0]))
+
     def iter(self, dummy=False):
         # Get all element in a list of sublists and sort them
-        entries = deflist_regex.findall(self.data)
-        entries.sort(key=lambda x:int(x[0]))
-        for id, type, line, family in entries:
-            id = int(id)
-            type = defTypeR [type.decode()]
-            line = int(line)
-            family = family.decode()
-            yield id, type, line, family
+        if self.entries is None:
+            self.populate_entries()
+
+        for id, type, line, family in self.entries:
+            yield id, defTypeR[type.decode()], int(line), family.decode()
         if dummy:
             yield maxId, None, None, None
 
-    def exists(self, idx, line_num):
-        entries = deflist_regex.findall(self.data)
-        for id, _, line, _ in entries:
+    def exists(self, idx: int, line_num: int):
+        if self.entries is None:
+            self.populate_entries()
+
+        for id, _, line, _ in self.entries:
             if id == idx and int(line) == line_num:
                 return True
 
         return False
 
-    def append(self, id, type, line, family):
+    def append(self, id: int, type, line: int, family: str):
         if type not in defTypeD:
             return
-        p = str(id) + defTypeD[type] + str(line) + family
-        if self.data != b'':
-            p = ',' + p
-        self.data += p.encode()
+
+        self.modified = True
+        if self.entries is None:
+            self.to_append.append((id, defTypeD[type].encode(), line, family.encode()))
+        else:
+            self.entries.append((id, defTypeD[type].encode(), line, family.encode()))
+
         self.add_family(family)
 
-    def pack(self):
-        return self.data + b'#' + self.families
+    def pack(self) -> bytes:
+        if self.entries is None:
+            to_append = b",".join([
+                str(arg[0]).encode() + arg[1] + str(arg[2]).encode() + arg[3]
+                for arg in self.to_append
+            ])
+            self.to_append = []
+            self.data += to_append
+            return self.data + b'#' + self.families
+        else:
+            self.data = b",".join([
+                str(arg[0]).encode() + arg[1] + str(arg[2]).encode() + arg[3]
+                for arg in self.entries
+            ])
+            return self.data + b'#' + self.families
 
-    def add_family(self, family):
-        family = family.encode()
+    def add_family(self, family: str):
         if not family in self.families.split(b','):
             if self.families != b'':
-                family = b',' + family
-            self.families += family
+                family = ',' + family
+            self.families += family.encode()
 
     def get_families(self):
-        return self.families.decode().split(',')
+        return [f.decode() for f in self.families.split(b',')]
 
     def get_macros(self):
-        return deflist_macro_regex.findall(self.data.decode()) or ''
+        return (deflist_macro_regex.findall(self.data.decode()) + [entry[1] for entry in self.to_append]) or ''
 
 class PathList:
     '''Stores associations between a blob ID and a file path.
@@ -138,42 +174,70 @@ class RefList:
         and the corresponding family.'''
     def __init__(self, data=b''):
         self.data = data
+        self.entries = None
+        self.to_append = []
+        self.sorted = False
+        self.modified = False
+
+    def decode_entry(self, k):
+        return (int(k[0].decode()), k[1].decode(), k[2].decode())
+
+    def populate_entries(self):
+        self.entries = [self.decode_entry(x.split(b':')) for x in self.data.split(b'\n')[:-1]]
+        self.entries += self.to_append
+        self.to_append = []
+        self.entries.sort(key=lambda x:int(x[0]))
 
     def iter(self, dummy=False):
-        # Split all elements in a list of sublists and sort them
-        entries = [x.split(b':') for x in self.data.split(b'\n')[:-1]]
-        entries.sort(key=lambda x:int(x[0]))
-        for b, c, d in entries:
-            b = int(b.decode())
-            c = c.decode()
-            d = d.decode()
+        if self.entries is None:
+            self.populate_entries()
+
+        for b, c, d in self.entries:
             yield b, c, d
         if dummy:
             yield maxId, None, None
 
     def append(self, id, lines, family):
-        p = str(id) + ':' + lines + ':' + family + '\n'
-        self.data += p.encode()
+        self.modified = True
+        if self.entries is not None:
+            self.entries.append((id, lines, family))
+        else:
+            self.to_append.append((id, lines, family))
 
     def pack(self):
-        return self.data
+        if self.entries is not None:
+            assert len(self.to_append) == 0
+            result = "".join([str(id) + ":" + lines + ":" + family + "\n" for id, lines, family in self.entries])
+            return result.encode()
+        elif len(self.to_append) != 0:
+            result = "".join([str(id) + ":" + lines + ":" + family + "\n" for id, lines, family in self.to_append])
+            self.data += result.encode()
+            self.to_append = []
+            return self.data
 
 class BsdDB:
     def __init__(self, filename, readonly, contentType, shared=False, cachesize=None):
         self.filename = filename
         self.db = berkeleydb.db.DB()
-        flags = berkeleydb.db.DB_THREAD if shared else 0
+        self.flags = berkeleydb.db.DB_THREAD if shared else 0
+
+        self.readonly = readonly
+        if self.readonly:
+            self.flags |= berkeleydb.db.DB_RDONLY
+        else:
+            self.flags |= berkeleydb.db.DB_CREATE
 
         if cachesize is not None:
             self.db.set_cachesize(cachesize[0], cachesize[1])
 
-        if readonly:
-            flags |= berkeleydb.db.DB_RDONLY
-            self.db.open(filename, flags=flags)
-        else:
-            flags |= berkeleydb.db.DB_CREATE
-            self.db.open(filename, flags=flags, mode=0o644, dbtype=berkeleydb.db.DB_BTREE)
+        self.open()
         self.ctype = contentType
+
+    def open(self):
+        if self.readonly:
+            self.db.open(self.filename, flags=self.flags)
+        else:
+            self.db.open(self.filename, flags=self.flags, mode=0o644, dbtype=berkeleydb.db.DB_BTREE)
 
     def exists(self, key):
         key = autoBytes(key)
@@ -211,34 +275,41 @@ class BsdDB:
 class CachedBsdDB:
     def __init__(self, filename, readonly, contentType, cachesize):
         self.filename = filename
-        self.db = berkeleydb.db.DB()
-        flags = 0
+        self.db = None
+        self.readonly = readonly
 
         self.cachesize = cachesize
         self.cache = OrderedDict()
 
-        if readonly:
+        self.open()
+
+        self.ctype = contentType
+
+    def open(self):
+        if self.db is None:
+            self.db = berkeleydb.db.DB()
+
+        flags = 0
+
+        if self.readonly:
             flags |= berkeleydb.db.DB_RDONLY
-            self.db.open(filename, flags=flags)
+            self.db.open(self.filename, flags=flags)
         else:
             flags |= berkeleydb.db.DB_CREATE
-            self.db.open(filename, flags=flags, mode=0o644, dbtype=berkeleydb.db.DB_BTREE)
-        self.ctype = contentType
+            self.db.open(self.filename, flags=flags, mode=0o644, dbtype=berkeleydb.db.DB_BTREE)
 
     def exists(self, key):
         if key in self.cache:
             return True
 
-        key = autoBytes(key)
-        return self.db.exists(key)
+        return self.db.exists(autoBytes(key))
 
     def get(self, key):
         if key in self.cache:
             self.cache.move_to_end(key)
             return self.cache[key]
 
-        key = autoBytes(key)
-        p = self.db.get(key)
+        p = self.db.get(autoBytes(key))
         if p is None:
             return None
         p = self.ctype(p)
@@ -247,21 +318,30 @@ class CachedBsdDB:
         self.cache.move_to_end(key)
         if len(self.cache) > self.cachesize:
             old_k, old_v = self.cache.popitem(last=False)
-            self.put_raw(old_k, old_v)
+            if old_v.modified:
+                self.put_raw(old_k, old_v)
 
         return p
 
     def get_keys(self):
+        self.sync()
         return self.db.keys()
 
     def put(self, key, val):
+        if self.readonly:
+            raise Exception("database is readonly")
+
         self.cache[key] = val
         self.cache.move_to_end(key)
         if len(self.cache) > self.cachesize:
             old_k, old_v = self.cache.popitem(last=False)
-            self.put_raw(old_k, old_v)
+            if old_v.modified:
+                self.put_raw(old_k, old_v)
 
     def put_raw(self, key, val, sync=False):
+        if self.readonly:
+            raise Exception("database is readonly")
+
         key = autoBytes(key)
         val = autoBytes(val)
         if type(val) is not bytes:
@@ -271,14 +351,22 @@ class CachedBsdDB:
             self.db.sync()
 
     def sync(self):
-        for k, v in self.cache.items():
-            self.put_raw(k, v)
+        start = time.time()
+        flushed = 0
+        if not self.readonly:
+            for k, v in self.cache.items():
+                if v.modified:
+                    v.modified = False
+                    self.put_raw(k, v)
+                    flushed += 1
 
+        print("synced", flushed, "/", len(self.cache), time.time()-start)
         self.db.sync()
-    
+
     def close(self):
         self.sync()
         self.db.close()
+        self.db = None
 
     def __len__(self):
         return self.db.stat()["nkeys"]
