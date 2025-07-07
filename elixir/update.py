@@ -1,3 +1,4 @@
+import os
 import os.path
 import logging
 import time
@@ -417,11 +418,15 @@ def ignore_sigint():
 if __name__ == "__main__":
 
     dts_comp_support = bool(int(script('dts-comp')))
-    db = DB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, update_cache=100000)
+    if "DB_CACHE" in os.environ:
+        db = DB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, update_cache=100000)
+        print("using db cache")
+    else:
+        print("not using db cache")
 
     set_start_method('spawn')
     with Pool(initializer=ignore_sigint) as pool:
-        for tag in scriptLines('list-tags'):
+        for tag in [b'v2.6.11', b'v6.9.9', b'v4.19.269', b'v3.18.107', b'v5.13.9']:
             #if not tag.startswith(b'v6'):
             #    continue
 
