@@ -66,87 +66,47 @@ class DefList:
         Also stores in which families the ident exists for faster tests.'''
     def __init__(self, data=b'#'):
         self.data, self.families = data.split(b'#')
-
         self.modified = False
-        self.entries = None
-        self.to_append = []
-
-    def populate_entries(self):
-        entries_modified = False
-        if self.entries is None:
-            self.entries = [
-                (int(d[0]), d[1], int(d[2]), d[3])
-                for d in deflist_regex.findall(self.data)
-            ]
-            entries_modified = True
-
-        if len(self.to_append) != 0:
-            self.entries += self.to_append
-            self.to_append = []
-            entries_modified = True
-
-        if entries_modified:
-            self.entries.sort(key=lambda x:int(x[0]))
 
     def iter(self, dummy=False):
         # Get all element in a list of sublists and sort them
-        if self.entries is None:
-            self.populate_entries()
-
-        for id, type, line, family in self.entries:
-            yield id, defTypeR[type.decode()], int(line), family.decode()
+        entries = deflist_regex.findall(self.data)
+        entries.sort(key=lambda x:int(x[0]))
+        for id, type, line, family in entries:
+            id = int(id)
+            type = defTypeR [type.decode()]
+            line = int(line)
+            family = family.decode()
+            yield id, type, line, family
         if dummy:
             yield maxId, None, None, None
 
-    def exists(self, idx: int, line_num: int):
-        if self.entries is None:
-            self.populate_entries()
-
-        for id, _, line, _ in self.entries:
-            if id == idx and int(line) == line_num:
-                return True
-
-        return False
-
-    def append(self, id: int, type, line: int, family: str):
+    def append(self, id, type, line, family):
         if type not in defTypeD:
             return
-
-        self.modified = True
-        if self.entries is None:
-            self.to_append.append((id, defTypeD[type].encode(), line, family.encode()))
-        else:
-            self.entries.append((id, defTypeD[type].encode(), line, family.encode()))
-
+        p = str(id) + defTypeD[type] + str(line) + family
+        if self.data != b'':
+            p = ',' + p
+        self.data += p.encode()
         self.add_family(family)
+        self.modified = True
 
-    def pack(self) -> bytes:
-        if self.entries is None:
-            to_append = b",".join([
-                str(arg[0]).encode() + arg[1] + str(arg[2]).encode() + arg[3]
-                for arg in self.to_append
-            ])
-            self.to_append = []
-            self.data += to_append
-            return self.data + b'#' + self.families
-        else:
-            self.data = b",".join([
-                str(arg[0]).encode() + arg[1] + str(arg[2]).encode() + arg[3]
-                for arg in self.entries
-            ])
-            return self.data + b'#' + self.families
+    def pack(self):
+        return self.data + b'#' + self.families
 
-    def add_family(self, family: str):
+    def add_family(self, family):
+        family = family.encode()
         if not family in self.families.split(b','):
             if self.families != b'':
-                family = ',' + family
-            self.families += family.encode()
+                family = b',' + family
+            self.families += family
+        self.modified = True
 
     def get_families(self):
-        return [f.decode() for f in self.families.split(b',')]
+        return self.families.decode().split(',')
 
     def get_macros(self):
-        return (deflist_macro_regex.findall(self.data.decode()) + [entry[1] for entry in self.to_append]) or ''
+        return deflist_macro_regex.findall(self.data.decode()) or ''
 
 class PathList:
     '''Stores associations between a blob ID and a file path.
@@ -175,46 +135,27 @@ class RefList:
         and the corresponding family.'''
     def __init__(self, data=b''):
         self.data = data
-        self.entries = None
-        self.to_append = []
-        self.sorted = False
         self.modified = False
 
-    def decode_entry(self, k):
-        return (int(k[0].decode()), k[1].decode(), k[2].decode())
-
-    def populate_entries(self):
-        self.entries = [self.decode_entry(x.split(b':')) for x in self.data.split(b'\n')[:-1]]
-        self.entries += self.to_append
-        self.to_append = []
-        self.entries.sort(key=lambda x:int(x[0]))
-
     def iter(self, dummy=False):
-        if self.entries is None:
-            self.populate_entries()
-
-        for b, c, d in self.entries:
+        # Split all elements in a list of sublists and sort them
+        entries = [x.split(b':') for x in self.data.split(b'\n')[:-1]]
+        entries.sort(key=lambda x:int(x[0]))
+        for b, c, d in entries:
+            b = int(b.decode())
+            c = c.decode()
+            d = d.decode()
             yield b, c, d
         if dummy:
             yield maxId, None, None
 
     def append(self, id, lines, family):
+        p = str(id) + ':' + lines + ':' + family + '\n'
+        self.data += p.encode()
         self.modified = True
-        if self.entries is not None:
-            self.entries.append((id, lines, family))
-        else:
-            self.to_append.append((id, lines, family))
 
     def pack(self):
-        if self.entries is not None:
-            assert len(self.to_append) == 0
-            result = "".join([str(id) + ":" + lines + ":" + family + "\n" for id, lines, family in self.entries])
-            return result.encode()
-        elif len(self.to_append) != 0:
-            result = "".join([str(id) + ":" + lines + ":" + family + "\n" for id, lines, family in self.to_append])
-            self.data += result.encode()
-            self.to_append = []
-            return self.data
+        return self.data
 
 class BsdDB:
     def __init__(self, filename, readonly, contentType, shared=False, cachesize=None):

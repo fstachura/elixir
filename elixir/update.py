@@ -61,15 +61,9 @@ class Cache:
 
 # Check if definition for ident is visible in current version
 def def_in_version(def_ident: DefList, idx_to_hash_and_filename: IdxCache) -> bool:
-    def_ident.populate_entries()
-
-    prev_idx = None
-    for def_idx, _, _, _ in reversed(def_ident.entries):
-        if def_idx == prev_idx:
-            continue
+    for def_idx, _, _, _ in def_ident.iter():
         if def_idx in idx_to_hash_and_filename:
             return True
-        prev_idx = def_idx
     return False
 
 # Add definitions to database
@@ -229,10 +223,7 @@ def get_refs(file_id: FileId, defs: CachedBsdDB) -> Optional[RefsDict]:
     line_num = 1
 
     def deflist_exists(deflist, idx: int, line: int):
-        deflist.populate_entries()
-        start = bisect.bisect_left(deflist.entries, idx, key=lambda x: x[0])
-
-        for def_idx, _, def_line, _ in deflist.entries[start:]:
+        for def_idx, _, def_line, _ in deflist.iter():
             if def_idx == idx:
                 if def_line == line:
                     return True
@@ -416,17 +407,16 @@ def ignore_sigint():
     signal.signal(signal.SIGINT, lambda _,__: None)
 
 if __name__ == "__main__":
-
     dts_comp_support = bool(int(script('dts-comp')))
-    if "DB_CACHE" in os.environ:
-        db = DB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, update_cache=100000)
-        print("using db cache")
-    else:
-        print("not using db cache")
+    db = DB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, update_cache=100000)
+
+    tags = [b'v2.6.11', b'v6.9.9', b'v4.19.269', b'v3.18.107', b'v5.13.9',
+            b'v5.14.1', b'v5.14.2', b'v5.14.3', b'v5.14.4', b'v5.14.5', b'v5.14.6', b'v5.14.7', b'v5.14.8']
+    #tags = scriptLines('list-tags')
 
     set_start_method('spawn')
     with Pool(initializer=ignore_sigint) as pool:
-        for tag in [b'v2.6.11', b'v6.9.9', b'v4.19.269', b'v3.18.107', b'v5.13.9']:
+        for tag in tags:
             #if not tag.startswith(b'v6'):
             #    continue
 
