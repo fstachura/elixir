@@ -416,17 +416,15 @@ def ignore_sigint():
     signal.signal(signal.SIGINT, lambda _,__: None)
 
 if __name__ == "__main__":
-
     dts_comp_support = bool(int(script('dts-comp')))
-    if "DB_CACHE" in os.environ:
-        db = DB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, update_cache=100000)
-        print("using db cache")
-    else:
-        print("not using db cache")
+    db = DB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, update_cache=100000)
+
+    tags = [b'v2.6.11', b'v6.9.9', b'v4.19.269', b'v3.18.107', b'v5.13.9',
+            b'v5.14.1', b'v5.14.2', b'v5.14.3', b'v5.14.4', b'v5.14.5', b'v5.14.6', b'v5.14.7', b'v5.14.8']
 
     set_start_method('spawn')
     with Pool(initializer=ignore_sigint) as pool:
-        for tag in [b'v2.6.11', b'v6.9.9', b'v4.19.269', b'v3.18.107', b'v5.13.9']:
+        for tag in tags:
             #if not tag.startswith(b'v6'):
             #    continue
 
