@@ -3,10 +3,11 @@ import logging
 import time
 import signal
 import bisect
+import math
 import cProfile
 from multiprocessing import cpu_count, set_start_method
 from multiprocessing.pool import Pool
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple, Set
 from collections import OrderedDict
 
 from find_compatible_dts import FindCompatibleDTS
@@ -59,14 +60,14 @@ class Cache:
             self.cache.popitem(last=False)
 
 # Check if definition for ident is visible in current version
-def def_in_version(def_ident: DefList, idx_to_hash_and_filename: IdxCache) -> bool:
+def def_in_version(def_ident: DefList, version_blobs: Set[int]) -> bool:
     def_ident.populate_entries()
 
     prev_idx = None
     for def_idx, _, _, _ in reversed(def_ident.entries):
         if def_idx == prev_idx:
             continue
-        if def_idx in idx_to_hash_and_filename:
+        if def_idx in version_blobs:
             return True
         prev_idx = def_idx
     return False
@@ -84,14 +85,14 @@ def add_defs(db: DB, defs: DefsDict):
         db.defs.put(ident, obj)
 
 # Add references to database
-def add_refs(db: DB, in_ver_cache: Cache, idx_to_hash_and_filename: IdxCache, refs: RefsDict):
+def add_refs(db: DB, in_ver_cache: Cache, version_blobs: Set[int], refs: RefsDict):
     for ident, idx_to_lines in refs.items():
         deflist = db.defs.get(ident)
         if deflist is None:
             continue
 
         if not in_ver_cache.contains(ident):
-            in_version = def_in_version(deflist, idx_to_hash_and_filename)
+            in_version = def_in_version(deflist, version_blobs)
             if not in_version:
                 in_ver_cache.put(ident, False)
                 continue
@@ -164,6 +165,7 @@ def collect_blobs(db: DB, tag: bytes) -> IdxCache:
             db.blob.put(hash, idx)
             db.hash.put(idx, hash)
             db.file.put(idx, filename)
+            db.todo.put(idx, "")
             idx += 1
 
     # Update number of blobs in the database
@@ -208,9 +210,6 @@ def get_defs(file_id: FileId) -> Optional[DefsDict]:
             defs[ident].append((idx, type, line, family))
 
     return defs
-
-def call_get_refs(arg: Tuple[FileId, str]) -> Optional[RefsDict]:
-    return get_refs(arg[0], CachedBsdDB(arg[1], True, DefList, 1000))
 
 # Collect references from the tokenizer for a file
 def get_refs(file_id: FileId, defs: CachedBsdDB) -> Optional[RefsDict]:
@@ -335,70 +334,111 @@ def get_comps_docs(file_id: FileId) -> Optional[Tuple[int, str, LinesListDict]]:
     return (idx, family, comps_docs)
 
 
-# Update a single version - collects data from all the stages and saves it in the database
-def update_version(db: DB, tag: bytes, pool: Pool, dts_comp_support: bool):
-    idx_to_hash_and_filename = collect_blobs(db, tag)
+def call_stage_1(args):
+    return stage_1(*args)
 
-    # Collect blobs to process and split list of blobs into chunks
-    idxes = [(idx, hash, filename) for (idx, (hash, filename, new)) in idx_to_hash_and_filename.items() if new]
-    chunksize = int(len(idxes) / cpu_count())
-    chunksize = min(max(1, chunksize), 100)
+def stage_1(file_id: FileId, dts_comp_support: bool):
+    return {
+        "defs": get_defs(file_id),
+        "docs": get_docs(file_id),
+        "dts_comps": get_comps(file_id) if dts_comp_support else None,
+    }
 
-    logger.info("collecting blobs done, new blobs: %d", len(idxes))
+def call_stage_2(args):
+    blobs, tag, defs_filename, dts_comp_support = args
+    defs = CachedBsdDB(defs_filename, True, DefList, 1000)
+    result = {
+        "tag": tag,
+        "refs": [],
+        "dts_comps_docs": [],
+    }
 
-    for result in pool.imap_unordered(get_defs, idxes, chunksize):
-        if result is not None:
-            add_defs(db, result)
+    for blob in blobs:
+        tmp = stage_2(blob, defs, dts_comp_support)
+        if tmp["refs"] is not None:
+            result["refs"].append(tmp["refs"])
+        if tmp["dts_comps_docs"] is not None:
+            result["dts_comps_docs"].append(tmp["dts_comps_docs"])
 
-    logger.info("defs done")
+    return result
 
-    for result in pool.imap_unordered(get_docs, idxes, chunksize):
-        if result is not None:
-            add_docs(db, *result)
+def stage_2(file_id: FileId, defs: CachedBsdDB, dts_comp_support: bool):
+    return {
+        "refs": get_refs(file_id, defs),
+        "dts_comps_docs": get_comps_docs(file_id) if dts_comp_support else None,
+    }
 
-    logger.info("docs done")
+def yield_blobs(db: DB, dts_comp_support: bool):
+    for tag in scriptLines('list-tags'):
+        if sigint_caught:
+            break
 
-    if dts_comp_support:
-        comp_idxes = [idx for idx in idxes if getFileFamily(idx[2]) not in (None, 'K', 'M')]
-        comp_chunksize = int(len(comp_idxes) / cpu_count())
-        comp_chunksize = min(max(1, comp_chunksize), 100)
-        for result in pool.imap_unordered(get_comps, comp_idxes, comp_chunksize):
-            if result is not None:
-                add_comps(db, *result)
+        if db.vers.exists(tag):
+            continue
 
-        logger.info("dts comps done")
+        logger.info("updating tag %s", tag)
 
-        for result in pool.imap_unordered(get_comps_docs, idxes, chunksize):
-            if result is not None:
-                add_comps_docs(db, *result)
+        idx_to_hash_and_filename = collect_blobs(db, tag)
+        yield from (
+            ((idx, hash, filename), dts_comp_support)
+            for (idx, (hash, filename, new))
+            in idx_to_hash_and_filename.items() if new
+        )
 
-        logger.info("dts comps docs done")
+def split_into_chunks(list, chunk_size):
+    return (list[i:i+chunk_size] for i in range(0, len(list), chunk_size))
 
+def yield_stage_2_blobs(db: DB, vers_to_blobset: Dict[str, Set[int]], dts_comp_support: bool):
+    for tag in scriptLines('list-tags'):
+        if sigint_caught:
+            break
 
-    #with cProfile.Profile() as pr:
+        vers = db.vers.get(tag)
+        if vers is None:
+            logger.warning("tag %s not in vers", tag)
+            continue
+
+        vers_blobset = set()
+        idxes = []
+        for idx, path in vers.iter():
+            vers_blobset.add(idx)
+            if db.todo.exists(idx):
+                hash = db.hash.get(idx)
+                db.todo.delete(idx)
+                idxes.append((idx, hash, os.path.basename(path)))
+
+        vers_to_blobset[tag.decode()] = vers_blobset
+        yield from (
+            (chunk, tag.decode(), db.defs.filename, dts_comp_support)
+            for chunk in split_into_chunks(idxes, math.ceil(len(idxes)/cpu_count()))
+        )
+
+def update(pool, db: DB, dts_comp_support: bool):
+    for result in pool.imap_unordered(call_stage_1, yield_blobs(db, dts_comp_support)):
+        if result["defs"] is not None:
+            add_defs(db, result["defs"])
+
+        if result["docs"] is not None:
+            add_docs(db, *result["docs"])
+
+        if result["dts_comps"] is not None:
+            add_comps(db, *result["dts_comps"])
+
     db.defs.close()
     db.defs.readonly = True
     db.defs.open()
 
     in_def_cache = Cache(10000)
-    ref_idxes = [(idx, db.defs.filename) for idx in idxes]
-    ref_chunksize = int(len(ref_idxes) / cpu_count())
-    ref_chunksize = min(max(1, ref_chunksize), 100)
-        #pr.dump_stats("5refs"+str(int(time.time())))
 
-    logger.info("ref blobs: %d", len(ref_idxes))
+    vers_to_blobset = {}
+    for result in pool.imap_unordered(call_stage_2, yield_stage_2_blobs(db, vers_to_blobset, dts_comp_support)):
+        if result["dts_comps_docs"] is not None:
+            for r in result["dts_comps_docs"]:
+                add_comps_docs(db, *r)
 
-    for result in pool.imap_unordered(call_get_refs, ref_idxes, ref_chunksize):
-        if result is not None:
-            add_refs(db, in_def_cache, idx_to_hash_and_filename, result)
-
-    db.defs.close()
-    db.defs.readonly = False
-    db.defs.open()
-
-    logger.info("refs done")
-    logger.info("update done")
-
+        if result["refs"] is not None:
+            for r in result["refs"]:
+                add_refs(db, in_def_cache, vers_to_blobset[result["tag"]], r)
 
 sigint_caught = False
 
@@ -415,22 +455,12 @@ def ignore_sigint():
     signal.signal(signal.SIGINT, lambda _,__: None)
 
 if __name__ == "__main__":
-
     dts_comp_support = bool(int(script('dts-comp')))
     db = DB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, update_cache=100000)
 
     set_start_method('spawn')
     with Pool(initializer=ignore_sigint) as pool:
-        for tag in scriptLines('list-tags'):
-            #if not tag.startswith(b'v6'):
-            #    continue
-
-            if sigint_caught:
-                break
-
-            if not db.vers.exists(tag):
-                logger.info("updating tag %s", tag)
-                update_version(db, tag, pool, dts_comp_support)
+        update(pool, db, dts_comp_support)
 
     logger.info("generating def caches")
     generate_defs_caches(db)

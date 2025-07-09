@@ -244,6 +244,10 @@ class BsdDB:
         key = autoBytes(key)
         return self.db.exists(key)
 
+    def delete(self, key):
+        key = autoBytes(key)
+        return self.db.delete(key)
+
     def get(self, key):
         key = autoBytes(key)
         p = self.db.get(key)
@@ -380,6 +384,7 @@ class DB:
             raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), dir)
 
         ro = readonly
+        NOOP = lambda x: x
 
         if update_cache:
             db_cls = lambda dir, ro, ctype: CachedBsdDB(dir, ro, ctype, cachesize=update_cache)
@@ -395,9 +400,9 @@ class DB:
         self.file = BsdDB(dir + '/filenames.db', ro, lambda x: x.decode(), shared=shared)
             # Map serial number to filename
         self.vers = BsdDB(dir + '/versions.db', ro, PathList, shared=shared)
+        self.todo = BsdDB(dir + '/todo.db', ro, NOOP, shared=shared)
         self.defs = db_cls(dir + '/definitions.db', ro, DefList)
         self.defs_cache = {}
-        NOOP = lambda x: x
         self.defs_cache['C'] = BsdDB(dir + '/definitions-cache-C.db', ro, NOOP, shared=shared)
         self.defs_cache['K'] = BsdDB(dir + '/definitions-cache-K.db', ro, NOOP, shared=shared)
         self.defs_cache['D'] = BsdDB(dir + '/definitions-cache-D.db', ro, NOOP, shared=shared)
