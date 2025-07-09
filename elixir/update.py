@@ -91,6 +91,19 @@ def add_refs(db: DB, in_ver_cache: Cache, idx_to_hash_and_filename: IdxCache, re
         if deflist is None:
             continue
 
+        def deflist_exists(deflist, idx: int, line: int):
+            deflist.populate_entries()
+            start = bisect.bisect_left(deflist.entries, idx, key=lambda x: x[0])
+
+            for def_idx, _, def_line, _ in deflist.entries[start:]:
+                if def_idx == idx:
+                    if def_line == line:
+                        return True
+                else:
+                    break
+
+            return False
+
         if not in_ver_cache.contains(ident):
             in_version = def_in_version(deflist, idx_to_hash_and_filename)
             if not in_version:
@@ -105,6 +118,15 @@ def add_refs(db: DB, in_ver_cache: Cache, idx_to_hash_and_filename: IdxCache, re
             obj = RefList()
 
         for (idx, family), lines_str in idx_to_lines.items():
+            cont = False
+            for line in lines_str.split(','):
+                if deflist_exists(deflist, idx, int(line)):
+                    cont = True
+                    break
+
+            if cont:
+                continue
+
             obj.append(idx, lines_str, family)
 
         db.refs.put(ident, obj)
@@ -210,11 +232,8 @@ def get_defs(file_id: FileId) -> Optional[DefsDict]:
 
     return defs
 
-def call_get_refs(arg: Tuple[FileId, str]) -> Optional[RefsDict]:
-    return get_refs(arg[0], CachedBsdDB(arg[1], True, DefList, 1000))
-
 # Collect references from the tokenizer for a file
-def get_refs(file_id: FileId, defs: CachedBsdDB) -> Optional[RefsDict]:
+def get_refs(file_id: FileId) -> Optional[RefsDict]:
     idx, hash, filename = file_id
     refs = {}
     family = getFileFamily(filename)
@@ -228,19 +247,6 @@ def get_refs(file_id: FileId, defs: CachedBsdDB) -> Optional[RefsDict]:
     even = True
     line_num = 1
 
-    def deflist_exists(deflist, idx: int, line: int):
-        deflist.populate_entries()
-        start = bisect.bisect_left(deflist.entries, idx, key=lambda x: x[0])
-
-        for def_idx, _, def_line, _ in deflist.entries[start:]:
-            if def_idx == idx:
-                if def_line == line:
-                    return True
-            else:
-                break
-
-        return False
-
     for tok in tokens:
         even = not even
         if even:
@@ -248,13 +254,6 @@ def get_refs(file_id: FileId, defs: CachedBsdDB) -> Optional[RefsDict]:
 
             # We only index CONFIG_??? in makefiles
             if (family != 'M' or tok.startswith(b'CONFIG_')):
-                deflist = defs.get(tok)
-                if not deflist:
-                    continue
-
-                if deflist_exists(deflist, idx, line_num):
-                    continue
-
                 if tok not in refs:
                     refs[tok] = {}
 
@@ -376,20 +375,14 @@ def update_version(db: DB, tag: bytes, pool: Pool, dts_comp_support: bool):
         logger.info("dts comps docs done")
 
 
-    #with cProfile.Profile() as pr:
-    db.defs.close()
-    db.defs.readonly = True
-    db.defs.open()
-
     in_def_cache = Cache(10000)
-    ref_idxes = [(idx, db.defs.filename) for idx in idxes]
-    ref_chunksize = int(len(ref_idxes) / cpu_count())
-    ref_chunksize = min(max(1, ref_chunksize), 100)
+    ref_idxes = idxes
+    ref_chunksize = chunksize
         #pr.dump_stats("5refs"+str(int(time.time())))
 
     logger.info("ref blobs: %d", len(ref_idxes))
 
-    for result in pool.imap_unordered(call_get_refs, ref_idxes, ref_chunksize):
+    for result in pool.imap_unordered(get_refs, ref_idxes, ref_chunksize):
         if result is not None:
             add_refs(db, in_def_cache, idx_to_hash_and_filename, result)
 
@@ -421,6 +414,7 @@ if __name__ == "__main__":
 
     tags = [b'v2.6.11', b'v6.9.9', b'v4.19.269', b'v3.18.107', b'v5.13.9',
             b'v5.14.1', b'v5.14.2', b'v5.14.3', b'v5.14.4', b'v5.14.5', b'v5.14.6', b'v5.14.7', b'v5.14.8']
+    tags = scriptLines('list-tags')
 
     set_start_method('spawn')
     with Pool(initializer=ignore_sigint) as pool:
