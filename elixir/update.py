@@ -4,7 +4,10 @@ import time
 import signal
 import bisect
 import math
+import queue
 import cProfile
+import random
+import threading
 from multiprocessing import cpu_count, set_start_method
 from multiprocessing.pool import Pool
 from typing import Dict, Iterable, List, Optional, Tuple, Set
@@ -12,7 +15,7 @@ from collections import OrderedDict
 
 from find_compatible_dts import FindCompatibleDTS
 
-from elixir.data import DB, BsdDB, CachedBsdDB, DefList, PathList, RefList
+from elixir.data import BlobsDB, BsdDB, CachedBsdDB, DefList, PathList, RefList, RelationsDB
 from elixir.lib import (
     compatibleFamily,
     compatibleMacro,
@@ -73,7 +76,7 @@ def def_in_version(def_ident: DefList, version_blobs: Set[int]) -> bool:
     return False
 
 # Add definitions to database
-def add_defs(db: DB, defs: DefsDict):
+def add_defs(db: RelationsDB, defs: DefsDict):
     for ident, occ_list in defs.items():
         obj = db.defs.get(ident)
         if obj is None:
@@ -85,7 +88,7 @@ def add_defs(db: DB, defs: DefsDict):
         db.defs.put(ident, obj)
 
 # Add references to database
-def add_refs(db: DB, in_ver_cache: Cache, version_blobs: Set[int], refs: RefsDict):
+def add_refs(db: RelationsDB, in_ver_cache: Cache, version_blobs: Set[int], refs: RefsDict):
     for ident, idx_to_lines in refs.items():
         deflist = db.defs.get(ident)
         if deflist is None:
@@ -110,15 +113,15 @@ def add_refs(db: DB, in_ver_cache: Cache, version_blobs: Set[int], refs: RefsDic
         db.refs.put(ident, obj)
 
 # Add documentation references to database
-def add_docs(db: DB, idx: int, family: str, docs: Dict[str, List[int]]):
+def add_docs(db: RelationsDB, idx: int, family: str, docs: Dict[str, List[int]]):
     add_to_lineslist(db.docs, idx, family, docs)
 
 # Add compatible references to database
-def add_comps(db: DB, idx: int, family: str, comps: Dict[str, List[int]]):
+def add_comps(db: RelationsDB, idx: int, family: str, comps: Dict[str, List[int]]):
     add_to_lineslist(db.comps, idx, family, comps)
 
 # Add compatible docs to database
-def add_comps_docs(db: DB, idx: int, family: str, comps_docs: Dict[str, List[int]]):
+def add_comps_docs(db: RelationsDB, idx: int, family: str, comps_docs: Dict[str, List[int]]):
     comps_result = {}
     for ident, v in comps_docs.items():
         if db.comps.exists(ident):
@@ -139,7 +142,7 @@ def add_to_lineslist(db_file: BsdDB, idx: int, family: str, to_add: Dict[str, Li
 
 
 # Adds blob list to database, returns blob id -> (hash, filename) dict
-def collect_blobs(db: DB, tag: bytes) -> IdxCache:
+def collect_blobs(db: BlobsDB, tag: bytes) -> IdxCache:
     idx = db.vars.get('numBlobs')
     if idx is None:
         idx = 0
@@ -181,7 +184,7 @@ def collect_blobs(db: DB, tag: bytes) -> IdxCache:
     return idx_to_hash_and_filename
 
 # Generate definitions cache databases
-def generate_defs_caches(db: DB):
+def generate_defs_caches(db: RelationsDB):
     for key in db.defs.get_keys():
         value = db.defs.get(key)
         for family in ['C', 'K', 'D', 'M']:
@@ -368,28 +371,30 @@ def stage_2(file_id: FileId, defs: CachedBsdDB, dts_comp_support: bool):
         "dts_comps_docs": get_comps_docs(file_id) if dts_comp_support else None,
     }
 
-def yield_blobs(db: DB, dts_comp_support: bool):
-    for tag in scriptLines('list-tags'):
+def yield_blobs(tags, db: BlobsDB, dts_comp_support: bool):
+    for tag in tags:
         if sigint_caught:
             break
 
         if db.vers.exists(tag):
             continue
 
-        logger.info("updating tag %s", tag)
-
         idx_to_hash_and_filename = collect_blobs(db, tag)
-        yield from (
+
+        new_blobs = [
             ((idx, hash, filename), dts_comp_support)
             for (idx, (hash, filename, new))
             in idx_to_hash_and_filename.items() if new
-        )
+        ]
+
+        logger.info("updating tag %s with %d new blobs", tag, len(new_blobs))
+        yield from new_blobs
 
 def split_into_chunks(list, chunk_size):
     return (list[i:i+chunk_size] for i in range(0, len(list), chunk_size))
 
-def yield_stage_2_blobs(db: DB, vers_to_blobset: Dict[str, Set[int]], dts_comp_support: bool):
-    for tag in scriptLines('list-tags'):
+def yield_stage_2_blobs(tags, db: BlobsDB, vers_to_blobset_lock: threading.Lock, vers_to_blobset: Dict[str, Set[int]], dts_comp_support: bool):
+    for tag in tags:
         if sigint_caught:
             break
 
@@ -397,6 +402,8 @@ def yield_stage_2_blobs(db: DB, vers_to_blobset: Dict[str, Set[int]], dts_comp_s
         if vers is None:
             logger.warning("tag %s not in vers", tag)
             continue
+
+        logger.info("updating refs of tag %s", tag)
 
         vers_blobset = set()
         idxes = []
@@ -407,22 +414,55 @@ def yield_stage_2_blobs(db: DB, vers_to_blobset: Dict[str, Set[int]], dts_comp_s
                 db.todo.delete(idx)
                 idxes.append((idx, hash, os.path.basename(path)))
 
-        vers_to_blobset[tag.decode()] = vers_blobset
+        with vers_to_blobset_lock:
+            vers_to_blobset[tag.decode()] = vers_blobset
+
         yield from (
-            (chunk, tag.decode(), db.defs.filename, dts_comp_support)
+            (chunk, tag.decode(), db.dir + '/definitions.db', dts_comp_support)
             for chunk in split_into_chunks(idxes, math.ceil(len(idxes)/cpu_count()))
         )
 
-def update(pool, db: DB, dts_comp_support: bool):
-    for result in pool.imap_unordered(call_stage_1, yield_blobs(db, dts_comp_support)):
+def db_defs_thread(defs_queue: queue.Queue):
+    dts_comp_support = bool(int(script('dts-comp')))
+    db = RelationsDB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, update_cache=100000)
+
+    while True:
+        result = defs_queue.get()
+        if "quit" in result:
+            break
+
+        start_defs = time.time()
+
         if result["defs"] is not None:
             add_defs(db, result["defs"])
+
+        start_docs = time.time()
 
         if result["docs"] is not None:
             add_docs(db, *result["docs"])
 
+        start_dts = time.time()
+
         if result["dts_comps"] is not None:
             add_comps(db, *result["dts_comps"])
+
+        end = time.time()
+
+        if end-start_defs > 1:
+            print("processing result took",
+              len(result["defs"]) if "defs" in result and result["defs"] is not None else 0,
+              start_docs-start_defs, start_docs-start_dts, start_dts-end)
+            print("defs stats", db.defs.raw_put_time, db.defs.raw_get_time,
+                  db.defs.raw_put_convert_time, db.defs.raw_get_convert_time)
+
+        defs_queue.task_done()
+
+    print("quitting defs thread")
+    db.close()
+
+def db_refs_thread(refs_queue: queue.Queue, vers_blobset_lock: threading.Lock, vers_to_blobset):
+    dts_comp_support = bool(int(script('dts-comp')))
+    db = RelationsDB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, update_cache=100000)
 
     db.defs.close()
     db.defs.readonly = True
@@ -430,15 +470,61 @@ def update(pool, db: DB, dts_comp_support: bool):
 
     in_def_cache = Cache(10000)
 
-    vers_to_blobset = {}
-    for result in pool.imap_unordered(call_stage_2, yield_stage_2_blobs(db, vers_to_blobset, dts_comp_support)):
+    while True:
+        result = refs_queue.get()
+        if "quit" in result:
+            break
+
         if result["dts_comps_docs"] is not None:
             for r in result["dts_comps_docs"]:
                 add_comps_docs(db, *r)
 
         if result["refs"] is not None:
             for r in result["refs"]:
-                add_refs(db, in_def_cache, vers_to_blobset[result["tag"]], r)
+                with vers_blobset_lock:
+                    vers = vers_to_blobset[result["tag"]]
+                add_refs(db, in_def_cache, vers, r)
+
+        refs_queue.task_done()
+
+    print("quitting refs thread")
+    db.close()
+
+def update(pool):
+    dts_comp_support = bool(int(script('dts-comp')))
+    tags = scriptLines('list-tags')
+    #random.shuffle(tags)
+    blobs_db = BlobsDB(getDataDir(), readonly=False, shared=False)
+
+    defs_queue = queue.Queue()
+    defs_thread = threading.Thread(target=db_defs_thread, args=(defs_queue,))
+    defs_thread.start()
+
+    for result in pool.imap_unordered(call_stage_1, yield_blobs(tags, blobs_db, dts_comp_support), chunksize=100):
+        defs_queue.put(result)
+        if defs_queue.qsize() % 100 == 0:
+            print("defs queue len", defs_queue.qsize())
+
+    defs_queue.join()
+    defs_queue.put({"quit": True})
+    defs_thread.join()
+
+    print("processing refs")
+
+    vers_to_blobset = {}
+    vers_to_blobset_lock = threading.Lock()
+    refs_queue = queue.Queue()
+    refs_thread = threading.Thread(target=db_refs_thread, args=(refs_queue, vers_to_blobset_lock, vers_to_blobset))
+    refs_thread.start()
+
+    for result in pool.imap_unordered(call_stage_2, yield_stage_2_blobs(tags, blobs_db, vers_to_blobset_lock, vers_to_blobset, dts_comp_support), chunksize=100):
+        refs_queue.put(result)
+        if refs_queue.qsize() % 100 == 0:
+            print("refs queue len", refs_queue.qsize())
+
+    refs_queue.join()
+    refs_queue.put({"quit": True})
+    refs_thread.join()
 
 sigint_caught = False
 
@@ -455,17 +541,15 @@ def ignore_sigint():
     signal.signal(signal.SIGINT, lambda _,__: None)
 
 if __name__ == "__main__":
-    dts_comp_support = bool(int(script('dts-comp')))
-    db = DB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, update_cache=100000)
-
     set_start_method('spawn')
     with Pool(initializer=ignore_sigint) as pool:
-        update(pool, db, dts_comp_support)
+        update(pool)
 
+    #db = RelationsDB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, update_cache=100000)
     logger.info("generating def caches")
-    generate_defs_caches(db)
+    #generate_defs_caches(db)
     logger.info("def caches generated")
-    db.close()
+    #db.close()
     logger.info("database closed")
 
 

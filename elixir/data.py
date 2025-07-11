@@ -290,9 +290,15 @@ class CachedBsdDB:
 
         self.ctype = contentType
 
+        self.raw_put_time = 0
+        self.raw_get_time = 0
+        self.raw_get_convert_time = 0
+        self.raw_put_convert_time = 0
+
     def open(self):
         if self.db is None:
             self.db = berkeleydb.db.DB()
+            self.db.set_cachesize(CACHESIZE[0], CACHESIZE[1])
 
         flags = 0
 
@@ -314,17 +320,20 @@ class CachedBsdDB:
             self.cache.move_to_end(key)
             return self.cache[key]
 
+        start = time.time()
         p = self.db.get(autoBytes(key))
+        self.raw_get_time += time.time()-start
+
         if p is None:
             return None
+
+        start = time.time()
         p = self.ctype(p)
+        self.raw_get_convert_time += time.time()-start
 
         self.cache[key] = p
         self.cache.move_to_end(key)
-        if len(self.cache) > self.cachesize:
-            old_k, old_v = self.cache.popitem(last=False)
-            if old_v.modified:
-                self.put_raw(old_k, old_v)
+        self.flush_tail()
 
         return p
 
@@ -338,34 +347,59 @@ class CachedBsdDB:
 
         self.cache[key] = val
         self.cache.move_to_end(key)
-        if len(self.cache) > self.cachesize:
-            old_k, old_v = self.cache.popitem(last=False)
-            if old_v.modified:
-                self.put_raw(old_k, old_v)
+        self.flush_tail()
 
     def put_raw(self, key, val, sync=False):
         if self.readonly:
             raise Exception("database is readonly")
 
+        start = time.time()
         key = autoBytes(key)
         val = autoBytes(val)
         if type(val) is not bytes:
             val = val.pack()
+        self.raw_put_convert_time += time.time()-start
+
+        start = time.time()
         self.db.put(key, val)
+        self.raw_put_time += time.time()-start
+
         if sync:
             self.db.sync()
 
+
+    def flush_tail(self):
+        if len(self.cache) > self.cachesize:
+            to_flush = []
+            start = time.time()
+            for _ in range(self.cachesize//100):
+                old_k, old_v = self.cache.popitem(last=False)
+                if old_v.modified:
+                    to_flush.append((old_k, old_v))
+
+            to_flush.sort(key=lambda x: x[0])
+            for old_k, old_v in to_flush:
+                self.put_raw(old_k, old_v)
+
+            end = time.time()
+            
+            if len(to_flush) > 0:
+                print("flushing tail took", len(to_flush), end-start)
+
     def sync(self):
         start = time.time()
-        flushed = 0
         if not self.readonly:
+            to_flush = []
             for k, v in self.cache.items():
                 if v.modified:
                     v.modified = False
-                    self.put_raw(k, v)
-                    flushed += 1
+                    to_flush.append((k,v))
 
-        print("synced", flushed, "/", len(self.cache), time.time()-start)
+            to_flush.sort(key=lambda x: x[0])
+            for k, v in to_flush:
+                self.put_raw(k, v)
+
+            print("synced", len(to_flush), "/", len(self.cache), time.time()-start)
         self.db.sync()
 
     def close(self):
@@ -393,20 +427,20 @@ class DB:
 
         self.vars = BsdDB(dir + '/variables.db', ro, lambda x: int(x.decode()), shared=shared)
             # Key-value store of basic information
-        self.blob = BsdDB(dir + '/blobs.db', ro, lambda x: int(x.decode()), shared=shared)
+        self.blob = BsdDB(dir + '/blobs.db', ro, lambda x: int(x.decode()), shared=shared, cachesize=CACHESIZE)
             # Map hash to sequential integer serial number
-        self.hash = BsdDB(dir + '/hashes.db', ro, lambda x: x, shared=shared)
+        self.hash = BsdDB(dir + '/hashes.db', ro, lambda x: x, shared=shared, cachesize=CACHESIZE)
             # Map serial number back to hash
-        self.file = BsdDB(dir + '/filenames.db', ro, lambda x: x.decode(), shared=shared)
+        self.file = BsdDB(dir + '/filenames.db', ro, lambda x: x.decode(), shared=shared, cachesize=CACHESIZE)
             # Map serial number to filename
         self.vers = BsdDB(dir + '/versions.db', ro, PathList, shared=shared)
-        self.todo = BsdDB(dir + '/todo.db', ro, NOOP, shared=shared)
+        self.todo = BsdDB(dir + '/todo.db', ro, NOOP, shared=shared, cachesize=CACHESIZE)
         self.defs = db_cls(dir + '/definitions.db', ro, DefList)
         self.defs_cache = {}
-        self.defs_cache['C'] = BsdDB(dir + '/definitions-cache-C.db', ro, NOOP, shared=shared)
-        self.defs_cache['K'] = BsdDB(dir + '/definitions-cache-K.db', ro, NOOP, shared=shared)
-        self.defs_cache['D'] = BsdDB(dir + '/definitions-cache-D.db', ro, NOOP, shared=shared)
-        self.defs_cache['M'] = BsdDB(dir + '/definitions-cache-M.db', ro, NOOP, shared=shared)
+        self.defs_cache['C'] = BsdDB(dir + '/definitions-cache-C.db', ro, NOOP, shared=shared, cachesize=CACHESIZE)
+        self.defs_cache['K'] = BsdDB(dir + '/definitions-cache-K.db', ro, NOOP, shared=shared, cachesize=CACHESIZE)
+        self.defs_cache['D'] = BsdDB(dir + '/definitions-cache-D.db', ro, NOOP, shared=shared, cachesize=CACHESIZE)
+        self.defs_cache['M'] = BsdDB(dir + '/definitions-cache-M.db', ro, NOOP, shared=shared, cachesize=CACHESIZE)
         assert sorted(self.defs_cache.keys()) == sorted(lib.CACHED_DEFINITIONS_FAMILIES)
         self.refs = db_cls(dir + '/references.db', ro, RefList)
         self.docs = db_cls(dir + '/doccomments.db', ro, RefList)
@@ -432,4 +466,74 @@ class DB:
         if self.dtscomp:
             self.comps.close()
             self.comps_docs.close()
+
+class RelationsDB:
+    def __init__(self, dir, readonly=True, dtscomp=False, shared=False, update_cache=None):
+        if os.path.isdir(dir):
+            self.dir = dir
+        else:
+            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), dir)
+
+        ro = readonly
+        NOOP = lambda x: x
+
+        if update_cache:
+            db_cls = lambda dir, ro, ctype: CachedBsdDB(dir, ro, ctype, cachesize=update_cache)
+        else:
+            db_cls = lambda dir, ro, ctype: BsdDB(dir, ro, ctype, shared=shared)
+
+        self.defs = db_cls(dir + '/definitions.db', ro, DefList)
+        self.defs_cache = {}
+        self.defs_cache['C'] = BsdDB(dir + '/definitions-cache-C.db', ro, NOOP, shared=shared, cachesize=CACHESIZE)
+        self.defs_cache['K'] = BsdDB(dir + '/definitions-cache-K.db', ro, NOOP, shared=shared, cachesize=CACHESIZE)
+        self.defs_cache['D'] = BsdDB(dir + '/definitions-cache-D.db', ro, NOOP, shared=shared, cachesize=CACHESIZE)
+        self.defs_cache['M'] = BsdDB(dir + '/definitions-cache-M.db', ro, NOOP, shared=shared, cachesize=CACHESIZE)
+        assert sorted(self.defs_cache.keys()) == sorted(lib.CACHED_DEFINITIONS_FAMILIES)
+        self.refs = db_cls(dir + '/references.db', ro, RefList)
+        self.docs = db_cls(dir + '/doccomments.db', ro, RefList)
+        self.dtscomp = dtscomp
+        if dtscomp:
+            self.comps = db_cls(dir + '/compatibledts.db', ro, RefList)
+            self.comps_docs = db_cls(dir + '/compatibledts_docs.db', ro, RefList)
+            # Use a RefList in case there are multiple doc comments for an identifier
+
+    def close(self):
+        self.defs.close()
+        self.defs_cache['C'].close()
+        self.defs_cache['K'].close()
+        self.defs_cache['D'].close()
+        self.defs_cache['M'].close()
+        self.refs.close()
+        self.docs.close()
+        if self.dtscomp:
+            self.comps.close()
+            self.comps_docs.close()
+
+class BlobsDB:
+    def __init__(self, dir, readonly=True, shared=False):
+        if os.path.isdir(dir):
+            self.dir = dir
+        else:
+            raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), dir)
+
+        ro = readonly
+        NOOP = lambda x: x
+
+        self.vars = BsdDB(dir + '/variables.db', ro, lambda x: int(x.decode()), shared=shared)
+            # Key-value store of basic information
+        self.blob = BsdDB(dir + '/blobs.db', ro, lambda x: int(x.decode()), shared=shared, cachesize=CACHESIZE)
+            # Map hash to sequential integer serial number
+        self.hash = BsdDB(dir + '/hashes.db', ro, lambda x: x, shared=shared, cachesize=CACHESIZE)
+            # Map serial number back to hash
+        self.file = BsdDB(dir + '/filenames.db', ro, lambda x: x.decode(), shared=shared, cachesize=CACHESIZE)
+            # Map serial number to filename
+        self.vers = BsdDB(dir + '/versions.db', ro, PathList, shared=shared)
+        self.todo = BsdDB(dir + '/todo.db', ro, NOOP, shared=shared, cachesize=CACHESIZE)
+
+    def close(self):
+        self.vars.close()
+        self.blob.close()
+        self.hash.close()
+        self.file.close()
+        self.vers.close()
 
