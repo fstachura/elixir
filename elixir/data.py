@@ -18,7 +18,7 @@
 #  You should have received a copy of the GNU Affero General Public License
 #  along with Elixir.  If not, see <http://www.gnu.org/licenses/>.
 
-from typing import OrderedDict
+from typing import OrderedDict, List, Tuple
 import berkeleydb
 import re
 import time
@@ -31,7 +31,7 @@ import errno
 # Cache size used by the update script for the largest databases. Tuple of (gigabytes, bytes).
 # https://docs.oracle.com/database/bdb181/html/api_reference/C/dbset_cachesize.html
 # https://docs.oracle.com/database/bdb181/html/programmer_reference/general_am_conf.html#am_conf_cachesize
-CACHESIZE = (2,0)
+CACHESIZE = (1,0)
 
 deflist_regex = re.compile(b'(\d*)(\w)(\d*)(\w),?')
 deflist_macro_regex = re.compile('\dM\d+(\w)')
@@ -120,6 +120,13 @@ class DefList:
 
         self.add_family(family)
 
+    def extend_raw(self, data: List[Tuple[int, bytes, int, bytes]]):
+        self.modified = True
+        if self.entries is None:
+            self.to_append.extend(data)
+        else:
+            self.entries.extend(data)
+
     def pack(self) -> bytes:
         if self.entries is None:
             to_append = b",".join([
@@ -153,6 +160,8 @@ class PathList:
         Inserted by update.py sorted by blob ID.'''
     def __init__(self, data=b''):
         self.data = data
+        self.modified = True
+        self.to_append = []
 
     def iter(self, dummy=False):
         for p in self.data.split(b'\n')[:-1]:
@@ -160,14 +169,20 @@ class PathList:
             id = int(id)
             path = path.decode()
             yield id, path
+        for id, path in self.to_append:
+            yield id, path.decode()
         if dummy:
             yield maxId, None
 
     def append(self, id, path):
-        p = str(id).encode() + b' ' + path + b'\n'
-        self.data += p
+        self.to_append.append((id, path))
 
     def pack(self):
+        if len(self.to_append) != 0:
+            self.data += b'\n'.join((str(id).encode() + b' ' + path for id, path in self.to_append))
+            self.data += b'\n'
+            self.to_append = []
+
         return self.data
 
 class RefList:
@@ -294,6 +309,7 @@ class CachedBsdDB:
         self.raw_get_time = 0
         self.raw_get_convert_time = 0
         self.raw_put_convert_time = 0
+        self.append_time = 0
 
     def open(self):
         if self.db is None:
@@ -374,7 +390,7 @@ class CachedBsdDB:
             start = time.time()
             for _ in range(self.cachesize//100):
                 old_k, old_v = self.cache.popitem(last=False)
-                if old_v.modified:
+                if type(old_v) != int and old_v.modified:
                     to_flush.append((old_k, old_v))
 
             to_flush.sort(key=lambda x: x[0])
@@ -383,7 +399,7 @@ class CachedBsdDB:
 
             end = time.time()
             
-            if len(to_flush) > 0:
+            if len(to_flush) > 0 and end-start >= 0.5:
                 print("flushing tail took", len(to_flush), end-start)
 
     def sync(self):
@@ -391,7 +407,7 @@ class CachedBsdDB:
         if not self.readonly:
             to_flush = []
             for k, v in self.cache.items():
-                if v.modified:
+                if type(v) != int and v.modified:
                     v.modified = False
                     to_flush.append((k,v))
 
@@ -521,13 +537,13 @@ class BlobsDB:
 
         self.vars = BsdDB(dir + '/variables.db', ro, lambda x: int(x.decode()), shared=shared)
             # Key-value store of basic information
-        self.blob = BsdDB(dir + '/blobs.db', ro, lambda x: int(x.decode()), shared=shared, cachesize=CACHESIZE)
+        self.blob = CachedBsdDB(dir + '/blobs.db', ro, lambda x: int(x.decode()), cachesize=50000)
             # Map hash to sequential integer serial number
         self.hash = BsdDB(dir + '/hashes.db', ro, lambda x: x, shared=shared, cachesize=CACHESIZE)
             # Map serial number back to hash
         self.file = BsdDB(dir + '/filenames.db', ro, lambda x: x.decode(), shared=shared, cachesize=CACHESIZE)
             # Map serial number to filename
-        self.vers = BsdDB(dir + '/versions.db', ro, PathList, shared=shared)
+        self.vers = BsdDB(dir + '/versions.db', ro, PathList, shared=shared, cachesize=CACHESIZE)
         self.todo = BsdDB(dir + '/todo.db', ro, NOOP, shared=shared, cachesize=CACHESIZE)
 
     def close(self):
