@@ -76,17 +76,15 @@ def def_in_version(def_ident: DefList, version_blobs: Set[int]) -> bool:
     return False
 
 # Add definitions to database
-def add_defs(db: RelationsDB, arg):
-    defs, family = arg
-    for ident, occ_list in defs.items():
+def add_defs(db: RelationsDB, defs):
+    for ident, tmp_pack in defs:
         obj = db.defs.get(ident)
         if obj is None:
             obj = DefList()
 
         start = time.time()
 
-        obj.extend_raw(occ_list)
-        obj.add_family(family)
+        obj.add_tmp_pack(tmp_pack)
 
         db.defs.append_time += time.time()-start
 
@@ -94,8 +92,8 @@ def add_defs(db: RelationsDB, arg):
 
 
 # Add references to database
-def add_refs(db: RelationsDB, in_ver_cache: Cache, version_blobs: Set[int], refs: RefsDict):
-    for ident, idx_to_lines in refs.items():
+def add_refs(db: RelationsDB, in_ver_cache: Cache, version_blobs: Set[int], refs):
+    for ident, tmp_pack in refs:
         deflist = db.defs.get(ident)
         if deflist is None:
             continue
@@ -113,37 +111,29 @@ def add_refs(db: RelationsDB, in_ver_cache: Cache, version_blobs: Set[int], refs
         if obj is None:
             obj = RefList()
 
-        for (idx, family), lines_str in idx_to_lines.items():
-            obj.append(idx, lines_str, family)
-
+        obj.add_tmp_pack(tmp_pack)
         db.refs.put(ident, obj)
 
 # Add documentation references to database
-def add_docs(db: RelationsDB, idx: int, family: str, docs: Dict[str, List[int]]):
-    add_to_lineslist(db.docs, idx, family, docs)
+def add_docs(db: RelationsDB, docs):
+    add_to_lineslist(db.docs, docs)
 
 # Add compatible references to database
-def add_comps(db: RelationsDB, idx: int, family: str, comps: Dict[str, List[int]]):
-    add_to_lineslist(db.comps, idx, family, comps)
+def add_comps(db: RelationsDB, comps):
+    add_to_lineslist(db.comps, comps)
 
 # Add compatible docs to database
-def add_comps_docs(db: RelationsDB, idx: int, family: str, comps_docs: Dict[str, List[int]]):
-    comps_result = {}
-    for ident, v in comps_docs.items():
-        if db.comps.exists(ident):
-            comps_result[ident] = v
-
-    add_to_lineslist(db.comps_docs, idx, family, comps_result)
+def add_comps_docs(db: RelationsDB, comps_docs):
+    add_to_lineslist(db.comps_docs, comps_docs)
 
 # Add data to a database file that uses lines list schema
-def add_to_lineslist(db_file: BsdDB, idx: int, family: str, to_add: Dict[str, List[int]]):
-    for ident, lines in to_add.items():
+def add_to_lineslist(db_file: BsdDB, to_add: List[Tuple[str, bytes]]):
+    for ident, tmp_pack in to_add:
         obj = db_file.get(ident)
         if obj is None:
             obj = RefList()
 
-        lines_str = ','.join((str(n) for n in lines))
-        obj.append(idx, lines_str, family)
+        obj.add_tmp_pack(tmp_pack)
         db_file.put(ident, obj)
 
 
@@ -215,7 +205,7 @@ def generate_defs_caches(db: RelationsDB):
 
 
 # Collect definitions from ctags for a file
-def get_defs(file_id: FileId) -> Optional[DefsDict]:
+def get_defs(file_id: FileId) -> Optional[List[Tuple[str, bytes]]]:
     idx, file_hash, filename = file_id
     defs = {}
     family = getFileFamily(filename)
@@ -229,16 +219,18 @@ def get_defs(file_id: FileId) -> Optional[DefsDict]:
         t = type.decode()
         line = int(line.decode())
         if isIdent(ident):
-            if ident not in defs:
-                defs[ident] = []
             if t not in defTypeD:
                 continue
-            defs[ident].append((idx, defTypeD[t].encode(), line, family.encode()))
+            if ident not in defs:
+                defs[ident] = DefList()
+            defs[ident].append(idx, t, line, family)
 
-    return defs, family
+    result = [(k, v.tmp_pack()) for k, v in defs.items()]
+    result.sort(key=lambda x: x[0])
+    return result
 
 # Collect references from the tokenizer for a file
-def get_refs(file_id: FileId, defs: CachedBsdDB) -> Optional[RefsDict]:
+def get_refs(file_id: FileId, defs: CachedBsdDB) -> Optional[List[Tuple[str, bytes]]]:
     idx, file_hash, filename = file_id
     refs = {}
     family = getFileFamily(filename)
@@ -283,31 +275,45 @@ def get_refs(file_id: FileId, defs: CachedBsdDB) -> Optional[RefsDict]:
                     refs[tok] = {}
 
                 if (idx, family) not in refs[tok]:
-                    refs[tok][(idx, family)] = str(line_num)
+                    refs[tok][(idx, family)] = [str(line_num)]
                 else:
-                    refs[tok][(idx, family)] += "," + str(line_num)
+                    refs[tok][(idx, family)].append(str(line_num))
 
         else:
             line_num += tok.count(b'\1')
 
+    result = []
+    for k, v in refs.items():
+        obj = RefList()
+        for (idx, family), lines in v.items():
+            obj.append(idx, ','.join(lines), family)
+        result.append((k, obj.pack_tmp()))
 
-    return refs
+    result.sort(key=lambda x: x[0])
+    return result
 
 # Collect compatible script output into lineslinst-schema compatible format
-def collect_get_blob_output(lines: Iterable[str]) -> LinesListDict:
+def collect_get_blob_output(idx: int, lines: Iterable[str], family: str) -> List[Tuple[str, bytes]]:
     results = {}
     for l in lines:
         ident, line = l.split(' ')
-        line = int(line)
 
         if ident not in results:
             results[ident] = []
         results[ident].append(line)
 
-    return results
+    final_results = []
+    for k, lines in results.items():
+        obj = RefList()
+        obj.append(idx, ','.join(lines), family)
+        final_results.append((k, obj.pack_tmp()))
+
+    final_results.sort(key=lambda x: x[0])
+
+    return final_results
 
 # Collect docs from doc comments script for a single file
-def get_docs(file_id: FileId) -> Optional[Tuple[int, str, LinesListDict]]:
+def get_docs(file_id: FileId) -> Optional[List[Tuple[str, bytes]]]:
     idx, file_hash, filename = file_id
     family = getFileFamily(filename)
     if family in (None, 'M'): return
@@ -319,12 +325,10 @@ def get_docs(file_id: FileId) -> Optional[Tuple[int, str, LinesListDict]]:
     if parser_time > 10:
         logger.info("docs timeout %d %d", parser_time, file_id)
 
-    docs = collect_get_blob_output(lines)
-
-    return (idx, family, docs)
+    return collect_get_blob_output(idx, lines, family)
 
 # Collect compatible references for a single file
-def get_comps(file_id: FileId) -> Optional[Tuple[int, str, LinesListDict]]:
+def get_comps(file_id: FileId) -> Optional[List[Tuple[str, bytes]]]:
     idx, file_hash, filename = file_id
     family = getFileFamily(filename)
     if family in (None, 'K', 'M'): return
@@ -338,12 +342,10 @@ def get_comps(file_id: FileId) -> Optional[Tuple[int, str, LinesListDict]]:
     if parser_time > 10:
         logger.info("comps docs timeout %d %d", parser_time, file_id)
 
-    comps = collect_get_blob_output(lines)
-
-    return (idx, family, comps)
+    return collect_get_blob_output(idx, lines, family)
 
 # Collect compatible documentation references for a single file
-def get_comps_docs(file_id: FileId) -> Optional[Tuple[int, str, LinesListDict]]:
+def get_comps_docs(file_id: FileId, comps_db: CachedBsdDB) -> List[Tuple[str, bytes]]:
     idx, file_hash, _ = file_id
     family = 'B'
 
@@ -352,47 +354,68 @@ def get_comps_docs(file_id: FileId) -> Optional[Tuple[int, str, LinesListDict]]:
     comps_docs = {}
     for l in lines:
         ident, line = l.split(' ')
-
+        if not comps_db.exists(ident):
+            continue
         if ident not in comps_docs:
             comps_docs[ident] = []
-        comps_docs[ident].append(int(line))
+        comps_docs[ident].append(line)
 
-    return (idx, family, comps_docs)
+    final_results = []
+    for k, lines in comps_docs.items():
+        obj = RefList()
+        obj.append(idx, ','.join(lines), family)
+        final_results.append((k, obj.pack_tmp()))
+
+    final_results.sort(key=lambda x: x[0])
+
+    return final_results
 
 
 def call_stage_1(args):
     return stage_1(*args)
 
 def stage_1(file_id: FileId, dts_comp_support: bool):
-    return {
+    result = {
         "defs": get_defs(file_id),
         "docs": get_docs(file_id),
-        "dts_comps": get_comps(file_id) if dts_comp_support else None,
     }
 
-def call_stage_2(args):
-    blobs, tag, defs_filename, dts_comp_support = args
-    defs = CachedBsdDB(defs_filename, True, DefList, 1000)
-    result = {
-        "tag": tag,
-        "refs": [],
-        "dts_comps_docs": [],
-    }
-
-    for blob in blobs:
-        tmp = stage_2(blob, defs, dts_comp_support)
-        if tmp["refs"] is not None:
-            result["refs"].append(tmp["refs"])
-        if tmp["dts_comps_docs"] is not None:
-            result["dts_comps_docs"].append(tmp["dts_comps_docs"])
+    if dts_comp_support:
+        result["dts_comps"] = get_comps(file_id)
 
     return result
 
-def stage_2(file_id: FileId, defs: CachedBsdDB, dts_comp_support: bool):
-    return {
-        "refs": get_refs(file_id, defs),
-        "dts_comps_docs": get_comps_docs(file_id) if dts_comp_support else None,
+def call_stage_2(args):
+    blobs, tag, dts_comp_support = args
+    defs = CachedBsdDB(getDataDir() + '/definitions.db', True, DefList, 1000)
+    if dts_comp_support:
+        comps = CachedBsdDB(getDataDir() + '/compatibledts.db', True, DefList, 1000)
+    else:
+        comps = None
+
+    result = {
+        "tag": tag,
+        "refs": [],
     }
+
+    for blob in blobs:
+        tmp = stage_2(blob, defs, comps, dts_comp_support)
+
+        if tmp["refs"] is not None:
+            result["refs"].extend(tmp["refs"])
+
+        if dts_comp_support and tmp["dts_comps_docs"] is not None:
+            result["dts_comps_docs"].extend(tmp["dts_comps_docs"])
+
+    return result
+
+def stage_2(file_id: FileId, defs: CachedBsdDB, comps: CachedBsdDB, dts_comp_support: bool):
+    result = {
+        "refs": get_refs(file_id, defs),
+    }
+    if dts_comp_support:
+        result["dts_comps_docs"] = get_comps_docs(file_id, comps)
+    return result
 
 def generate_blobs(queue: queue.Queue, tags, dts_comp_support: bool):
     db = BlobsDB(getDataDir(), readonly=False, shared=False)
@@ -461,7 +484,7 @@ def generate_stage_2_blobs(queue: queue.Queue, tags, dts_comp_support: bool):
                 idxes.append((idx, file_hash, os.path.basename(path)))
 
         for chunk in split_into_chunks(idxes, math.ceil(len(idxes)/cpu_count())):
-            queue.put({"blobs": (chunk, tag.decode(), getDataDir() + '/definitions.db', dts_comp_support)})
+            queue.put({"blobs": (chunk, tag.decode(), dts_comp_support)})
 
     queue.put({"quit": True})
     todo_db.close()
@@ -502,12 +525,12 @@ def db_defs_thread(defs_queue: multiprocessing.Queue):
         start_docs = time.time()
 
         if result["docs"] is not None:
-            add_docs(db, *result["docs"])
+            add_docs(db, result["docs"])
 
         start_dts = time.time()
 
-        if result["dts_comps"] is not None:
-            add_comps(db, *result["dts_comps"])
+        if "dts_comps" in result and result["dts_comps"] is not None:
+            add_comps(db, result["dts_comps"])
 
         end = time.time()
 
@@ -535,6 +558,10 @@ def db_refs_thread(refs_queue: queue.Queue):
     db.defs.close()
     db.defs.readonly = True
     db.defs.open()
+    if dts_comp_support:
+        db.comps.close()
+        db.comps.readonly = True
+        db.comps.open()
 
     in_def_cache = Cache(10000)
     vers_cache = Cache(cpu_count())
@@ -553,13 +580,11 @@ def db_refs_thread(refs_queue: queue.Queue):
                 vers.add(idx)
             vers_cache.put(tag, vers)
 
-        if result["dts_comps_docs"] is not None:
-            for r in result["dts_comps_docs"]:
-                add_comps_docs(db, *r)
+        if "dts_comps_docs" in result and result["dts_comps_docs"] is not None:
+            add_comps_docs(db, result["dts_comps_docs"])
 
         if result["refs"] is not None:
-            for r in result["refs"]:
-                add_refs(db, in_def_cache, vers, r)
+            add_refs(db, in_def_cache, vers, result["refs"])
 
         refs_queue.task_done()
 
@@ -615,15 +640,16 @@ def ignore_sigint():
     signal.signal(signal.SIGINT, lambda _,__: None)
 
 if __name__ == "__main__":
+    dts_comp_support = bool(int(script('dts-comp')))
     set_start_method('spawn')
     with Pool(initializer=ignore_sigint) as pool:
         update(pool)
 
-    #db = RelationsDB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, update_cache=100000)
+    db = RelationsDB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, update_cache=100000)
     logger.info("generating def caches")
-    #generate_defs_caches(db)
+    generate_defs_caches(db)
     logger.info("def caches generated")
-    #db.close()
+    db.close()
     logger.info("database closed")
 
 

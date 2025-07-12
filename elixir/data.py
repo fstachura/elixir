@@ -70,17 +70,20 @@ class DefList:
         self.modified = False
         self.entries = None
         self.to_append = []
+        self.tmp_packs_to_append = []
 
     def populate_entries(self):
         entries_modified = False
         if self.entries is None:
+            self.flush_tmp_packs()
             self.entries = [
-                (int(d[0]), d[1], int(d[2]), d[3])
+                (int(d[0]), d[1], d[2], d[3])
                 for d in deflist_regex.findall(self.data)
             ]
             entries_modified = True
 
         if len(self.to_append) != 0:
+            # TODO convert to_append entries
             self.entries += self.to_append
             self.to_append = []
             entries_modified = True
@@ -114,20 +117,15 @@ class DefList:
 
         self.modified = True
         if self.entries is None:
-            self.to_append.append((id, defTypeD[type].encode(), line, family.encode()))
+            self.to_append.append((id, defTypeD[type].encode(), str(line), family.encode()))
         else:
-            self.entries.append((id, defTypeD[type].encode(), line, family.encode()))
+            self.entries.append((id, defTypeD[type].encode(), str(line), family.encode()))
 
         self.add_family(family)
 
-    def extend_raw(self, data: List[Tuple[int, bytes, int, bytes]]):
-        self.modified = True
-        if self.entries is None:
-            self.to_append.extend(data)
-        else:
-            self.entries.extend(data)
+    def pack_without_families(self) -> bytes:
+        self.flush_tmp_packs()
 
-    def pack(self) -> bytes:
         if self.entries is None:
             to_append = b",".join([
                 str(arg[0]).encode() + arg[1] + str(arg[2]).encode() + arg[3]
@@ -135,13 +133,51 @@ class DefList:
             ])
             self.to_append = []
             self.data += to_append
-            return self.data + b'#' + self.families
         else:
             self.data = b",".join([
                 str(arg[0]).encode() + arg[1] + str(arg[2]).encode() + arg[3]
                 for arg in self.entries
             ])
-            return self.data + b'#' + self.families
+            self.entries = None
+
+        return self.data
+
+    def pack(self):
+        return self.pack_without_families() + b'#' + self.families
+
+    def tmp_pack(self) -> Tuple[bytes, List[bytes]]:
+        # TODO what about sorting in update?
+        return (self.pack_without_families(), self.families.split(b','))
+
+    def add_tmp_pack(self, tmp_pack: Tuple[bytes, List[bytes]]):
+        self.tmp_packs_to_append.append(tmp_pack)
+        self.modified = True
+    
+    def flush_tmp_packs(self):
+        if len(self.tmp_packs_to_append) == 0:
+            return
+
+        if self.entries is not None:
+            self.pack_without_families()
+
+        for tmp_pack in self.tmp_packs_to_append:
+            data, families = tmp_pack
+
+            for f in families:
+                self.add_family_raw(f)
+
+            if len(self.data) != 0:
+                self.data += b','
+                self.data += data
+            else:
+                self.data = data
+
+        self.tmp_packs_to_append = []
+        self.modified = True
+
+    def add_family_raw(self, family: bytes):
+        if not family in self.families.split(b','):
+            self.families += b',' + family
 
     def add_family(self, family: str):
         if not family in self.families.split(b','):
@@ -213,7 +249,7 @@ class RefList:
         if dummy:
             yield maxId, None, None
 
-    def append(self, id, lines, family):
+    def append(self, id: int, lines: str, family: str):
         self.modified = True
         if self.entries is not None:
             self.entries.append((id, lines, family))
@@ -224,12 +260,24 @@ class RefList:
         if self.entries is not None:
             assert len(self.to_append) == 0
             result = "".join([str(id) + ":" + lines + ":" + family + "\n" for id, lines, family in self.entries])
-            return result.encode()
+            self.entires = None
+            self.data = result.encode()
+            return self.data
         elif len(self.to_append) != 0:
             result = "".join([str(id) + ":" + lines + ":" + family + "\n" for id, lines, family in self.to_append])
             self.data += result.encode()
             self.to_append = []
             return self.data
+        else:
+            return self.data
+
+    def pack_tmp(self) -> bytes:
+        return self.pack()
+
+    def add_tmp_pack(self, tmp_pack: bytes):
+        self.pack()
+        self.data += tmp_pack
+        self.modified = True
 
 class BsdDB:
     def __init__(self, filename, readonly, contentType, shared=False, cachesize=None):
@@ -293,7 +341,7 @@ class BsdDB:
         return self.db.stat()["nkeys"]
 
 class CachedBsdDB:
-    def __init__(self, filename, readonly, contentType, cachesize):
+    def __init__(self, filename, readonly, contentType, cachesize, simple=False):
         self.filename = filename
         self.db = None
         self.readonly = readonly
@@ -304,6 +352,7 @@ class CachedBsdDB:
         self.open()
 
         self.ctype = contentType
+        self.simple = simple
 
         self.raw_put_time = 0
         self.raw_get_time = 0
@@ -374,6 +423,7 @@ class CachedBsdDB:
         val = autoBytes(val)
         if type(val) is not bytes:
             val = val.pack()
+
         self.raw_put_convert_time += time.time()-start
 
         start = time.time()
@@ -390,7 +440,7 @@ class CachedBsdDB:
             start = time.time()
             for _ in range(self.cachesize//100):
                 old_k, old_v = self.cache.popitem(last=False)
-                if type(old_v) != int and old_v.modified:
+                if self.simple or old_v.modified:
                     to_flush.append((old_k, old_v))
 
             to_flush.sort(key=lambda x: x[0])
@@ -407,7 +457,9 @@ class CachedBsdDB:
         if not self.readonly:
             to_flush = []
             for k, v in self.cache.items():
-                if type(v) != int and v.modified:
+                if self.simple:
+                    to_flush.append((k,v))
+                elif v.modified:
                     v.modified = False
                     to_flush.append((k,v))
 
@@ -416,6 +468,7 @@ class CachedBsdDB:
                 self.put_raw(k, v)
 
             print("synced", len(to_flush), "/", len(self.cache), time.time()-start)
+
         self.db.sync()
 
     def close(self):
@@ -537,7 +590,7 @@ class BlobsDB:
 
         self.vars = BsdDB(dir + '/variables.db', ro, lambda x: int(x.decode()), shared=shared)
             # Key-value store of basic information
-        self.blob = CachedBsdDB(dir + '/blobs.db', ro, lambda x: int(x.decode()), cachesize=50000)
+        self.blob = CachedBsdDB(dir + '/blobs.db', ro, lambda x: int(x.decode()), cachesize=50000, simple=True)
             # Map hash to sequential integer serial number
         self.hash = BsdDB(dir + '/hashes.db', ro, lambda x: x, shared=shared, cachesize=CACHESIZE)
             # Map serial number back to hash
