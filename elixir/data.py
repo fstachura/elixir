@@ -31,7 +31,7 @@ import errno
 # Cache size used by the update script for the largest databases. Tuple of (gigabytes, bytes).
 # https://docs.oracle.com/database/bdb181/html/api_reference/C/dbset_cachesize.html
 # https://docs.oracle.com/database/bdb181/html/programmer_reference/general_am_conf.html#am_conf_cachesize
-CACHESIZE = (1,0)
+CACHESIZE = (0,1024*1024*512)
 
 deflist_regex = re.compile(b'(\d*)(\w)(\d*)(\w),?')
 deflist_macro_regex = re.compile('\dM\d+(\w)')
