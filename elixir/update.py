@@ -675,11 +675,11 @@ if __name__ == "__main__":
     with Pool(initializer=ignore_sigint) as pool:
         update(pool)
 
-    #db = RelationsDB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, update_cache=100000)
+    db = RelationsDB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, update_cache=100000)
     logger.info("generating def caches")
-    #generate_defs_caches(db)
+    generate_defs_caches(db)
     logger.info("def caches generated")
-    #db.close()
+    db.close()
     logger.info("database closed")
 
 

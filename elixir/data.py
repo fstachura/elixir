@@ -228,6 +228,7 @@ class RefList:
         self.data = data
         self.entries = None
         self.to_append = []
+        self.tmp_packs_to_append = []
         self.sorted = False
         self.modified = False
 
@@ -235,6 +236,7 @@ class RefList:
         return (int(k[0].decode()), k[1].decode(), k[2].decode())
 
     def populate_entries(self):
+        self.flush_tmp_packs()
         self.entries = [self.decode_entry(x.split(b':')) for x in self.data.split(b'\n')[:-1]]
         self.entries += self.to_append
         self.to_append = []
@@ -256,7 +258,16 @@ class RefList:
         else:
             self.to_append.append((id, lines, family))
 
+    def flush_tmp_packs(self):
+        if len(self.tmp_packs_to_append) == 0:
+            return
+
+        self.data += b''.join(self.tmp_packs_to_append)
+        self.tmp_packs_to_append = []
+
     def pack(self):
+        self.flush_tmp_packs()
+
         if self.entries is not None:
             assert len(self.to_append) == 0
             result = "".join([str(id) + ":" + lines + ":" + family + "\n" for id, lines, family in self.entries])
@@ -275,9 +286,8 @@ class RefList:
         return self.pack()
 
     def add_tmp_pack(self, tmp_pack: bytes):
-        self.pack()
-        self.data += tmp_pack
         self.modified = True
+        self.tmp_packs_to_append.append(tmp_pack)
 
 class BsdDB:
     def __init__(self, filename, readonly, contentType, shared=False, cachesize=None):
