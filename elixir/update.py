@@ -401,7 +401,7 @@ def generate_stage_1_blobs(blobs_queue: multiprocessing.Queue, tags):
         end = time.time()
 
         logger.info("updating tag %s with %d new blobs, collect took %d", tag, len(new_blobs), end-start)
-        for chunk in split_into_chunks(new_blobs, math.ceil(len(new_blobs)/cpu_count())):
+        for chunk in split_into_chunks(new_blobs, math.ceil(len(new_blobs)/(cpu_count()*8))):
             blobs_queue.put({"blobs": chunk})
 
     db.close()
@@ -426,13 +426,24 @@ def process_stage_1_blobs(blobs_queue: multiprocessing.Queue, results_queue: mul
             result["dts_comps"] = []
 
         for blob in args["blobs"]:
-            if defs := get_defs(blob):
-                result["defs"].extend(defs)
-            if docs := get_docs(blob):
-                result["docs"].extend(docs)
+            try:
+                if defs := get_defs(blob):
+                    result["defs"].extend(defs)
+            except Exception:
+                logger.exception("failed to process defs for %s", blob)
+
+            try:
+                if docs := get_docs(blob):
+                    result["docs"].extend(docs)
+            except Exception:
+                logger.exception("failed to process docs for %s", blob)
+
             if dts_comp_support:
-                if dts_comps := get_comps(blob):
-                    result["dts_comps"].extend(dts_comps)
+                try:
+                    if dts_comps := get_comps(blob):
+                        result["dts_comps"].extend(dts_comps)
+                except Exception:
+                    logger.exception("failed to process dts comps for %s", blob)
 
         results_queue.put(result)
 
@@ -472,7 +483,7 @@ def put_stage_1_results(defs_queue: multiprocessing.Queue):
         total_processing_time += end-start_defs
 
         if end-start_defs > 1:
-            logger.info("processing result took %d %d %d %d %d", time.time(),
+            logger.info("processing result took %d %d %d %d", 
               len(result["defs"]) if "defs" in result and result["defs"] is not None else 0,
               start_docs-start_defs, start_dts-start_dts, end-start_dts)
 
@@ -547,7 +558,7 @@ def generate_stage_2_blobs(queue: multiprocessing.Queue, tags):
 
         logger.info("updating refs of tag %s blobs %d", tag, len(idxes))
 
-        for chunk in split_into_chunks(idxes, math.ceil(len(idxes)/(cpu_count()*3))):
+        for chunk in split_into_chunks(idxes, math.ceil(len(idxes)/(cpu_count()*8))):
             queue.put({"blobs": (chunk, tag.decode())})
 
     todo_db.close()
@@ -589,11 +600,18 @@ def process_stage_2_blobs(blobs_queue: multiprocessing.Queue, results_queue: mul
             result["dts_comps_docs"] = []
 
         for blob in blobs:
-            if refs := get_refs(blob, defs, vers):
-                result["refs"].extend(refs)
+            try:
+                if refs := get_refs(blob, defs, vers):
+                    result["refs"].extend(refs)
+            except Exception:
+                logger.exception("failed to process refs for %s", blob)
+
             if dts_comp_support:
-                if comps_docs := get_comps_docs(blob, comps):
-                    result["dts_comps_docs"].extend(comps_docs)
+                try:
+                    if comps_docs := get_comps_docs(blob, comps):
+                        result["dts_comps_docs"].extend(comps_docs)
+                except Exception:
+                    logger.exception("failed to process dts comps docs for %s", blob)
 
         results_queue.put(result)
 
@@ -685,8 +703,10 @@ def update_stage_2(tags):
     logger.info("stage 2 update quit")
 
 def update():
-    tags = scriptLines('list-tags')
+    tags = list(reversed(scriptLines('list-tags')))[:3]
     update_stage_1(tags)
+    if sigint_caught:
+        return
     update_stage_2(tags)
 
 sigint_caught = False
