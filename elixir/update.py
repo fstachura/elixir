@@ -1,3 +1,4 @@
+from multiprocessing import process
 import os.path
 import logging
 import time
@@ -21,9 +22,10 @@ from elixir.lib import (
     isIdent,
     script,
     scriptLines,
+    scriptLinesGen,
 )
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(process)d %(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 # File identification - id, hash, filename
@@ -90,26 +92,17 @@ def add_defs(db: RelationsDB, defs):
 
 
 # Add references to database
-def add_refs(db: RelationsDB, in_ver_cache: Cache, version_blobs: Set[int], refs):
+def add_refs(db: RelationsDB, refs):
     for ident, tmp_pack in refs:
         deflist = db.defs.get(ident)
         if deflist is None:
             continue
 
-        start = time.time()
-
-        if not in_ver_cache.contains(ident):
-            in_version = def_in_version(deflist, version_blobs)
-            if not in_version:
-                in_ver_cache.put(ident, False)
-                continue
-            in_ver_cache.put(ident, True)
-        elif not in_ver_cache.get(ident):
-            continue
-
         obj = db.refs.get(ident)
         if obj is None:
             obj = RefList()
+
+        start = time.time()
 
         obj.add_tmp_pack(tmp_pack)
 
@@ -233,7 +226,7 @@ def get_defs(file_id: FileId) -> Optional[List[Tuple[str, bytes]]]:
     return result
 
 # Collect references from the tokenizer for a file
-def get_refs(file_id: FileId, defs: CachedBsdDB) -> Optional[List[Tuple[str, bytes]]]:
+def get_refs(file_id: FileId, defs: CachedBsdDB, blobs_in_vers: Set[int]) -> Optional[List[Tuple[str, bytes]]]:
     idx, file_hash, filename = file_id
     refs = {}
     family = getFileFamily(filename)
@@ -243,9 +236,11 @@ def get_refs(file_id: FileId, defs: CachedBsdDB) -> Optional[List[Tuple[str, byt
     # Kconfig values are saved as CONFIG_<value>
     prefix = b'' if family != 'K' else b'CONFIG_'
 
-    tokens = scriptLines('tokenize-file', '-b', file_hash, family)
+    tokens = scriptLinesGen('tokenize-file', '-b', file_hash, family)
     even = True
     line_num = 1
+
+    in_ver_cache = Cache(10000)
 
     def deflist_exists(deflist, idx: int, line: int):
         deflist.populate_entries()
@@ -272,6 +267,15 @@ def get_refs(file_id: FileId, defs: CachedBsdDB) -> Optional[List[Tuple[str, byt
                     continue
 
                 if deflist_exists(deflist, idx, line_num):
+                    continue
+
+                if not in_ver_cache.contains(tok):
+                    in_version = def_in_version(deflist, blobs_in_vers)
+                    if not in_version:
+                        in_ver_cache.put(tok, False)
+                        continue
+                    in_ver_cache.put(tok, True)
+                elif not in_ver_cache.get(tok):
                     continue
 
                 if tok not in refs:
@@ -353,7 +357,7 @@ def get_comps_docs(file_id: FileId, comps_db: CachedBsdDB) -> List[Tuple[str, by
     family = 'B'
 
     compatibles_parser = FindCompatibleDTS()
-    lines = compatibles_parser.run(scriptLines('get-blob', file_hash), family)
+    lines = compatibles_parser.run(scriptLinesGen('get-blob', file_hash), family)
     comps_docs = {}
     for l in lines:
         ident, line = l.split(' ')
@@ -374,56 +378,9 @@ def get_comps_docs(file_id: FileId, comps_db: CachedBsdDB) -> List[Tuple[str, by
     return final_results
 
 
-def call_stage_1(args):
-    return stage_1(*args)
+def generate_stage_1_blobs(blobs_queue: multiprocessing.Queue, tags):
+    logger.info("stage 1 blobs thread start")
 
-def stage_1(file_id: FileId, dts_comp_support: bool):
-    result = {
-        "defs": get_defs(file_id),
-        "docs": get_docs(file_id),
-    }
-
-    if dts_comp_support:
-        result["dts_comps"] = get_comps(file_id)
-
-    return result
-
-def call_stage_2(args):
-    blobs, tag, dts_comp_support = args
-    defs = CachedBsdDB(getDataDir() + '/definitions.db', True, DefList, 1000)
-    if dts_comp_support:
-        comps = CachedBsdDB(getDataDir() + '/compatibledts.db', True, DefList, 1000)
-    else:
-        comps = None
-
-    result = {
-        "tag": tag,
-        "refs": [],
-    }
-
-    if dts_comp_support:
-        result["dts_comps_docs"] = []
-
-    for blob in blobs:
-        tmp = stage_2(blob, defs, comps, dts_comp_support)
-
-        if tmp["refs"] is not None:
-            result["refs"].extend(tmp["refs"])
-
-        if dts_comp_support and tmp["dts_comps_docs"] is not None:
-            result["dts_comps_docs"].extend(tmp["dts_comps_docs"])
-
-    return result
-
-def stage_2(file_id: FileId, defs: CachedBsdDB, comps: CachedBsdDB, dts_comp_support: bool):
-    result = {
-        "refs": get_refs(file_id, defs),
-    }
-    if dts_comp_support:
-        result["dts_comps_docs"] = get_comps_docs(file_id, comps)
-    return result
-
-def generate_blobs(queue: multiprocessing.Queue, tags, dts_comp_support: bool):
     db = BlobsDB(getDataDir(), readonly=False, shared=False)
     for tag in tags:
         if sigint_caught:
@@ -435,87 +392,55 @@ def generate_blobs(queue: multiprocessing.Queue, tags, dts_comp_support: bool):
         start = time.time()
         idx_to_hash_and_filename = collect_blobs(db, tag)
 
+
         new_blobs = [
-            ((idx, file_hash, filename), dts_comp_support)
+            (idx, file_hash, filename)
             for (idx, (file_hash, filename, new))
             in idx_to_hash_and_filename.items() if new
         ]
         end = time.time()
 
         logger.info("updating tag %s with %d new blobs, collect took %d", tag, len(new_blobs), end-start)
-        queue.put({"blobs": new_blobs})
+        for chunk in split_into_chunks(new_blobs, math.ceil(len(new_blobs)/cpu_count())):
+            blobs_queue.put({"blobs": chunk})
 
-    queue.put({"quit": True})
     db.close()
-    logger.info("blobs thread quit")
 
-def yield_blobs(tags, dts_comp_support: bool):
-    blobs_queue = multiprocessing.Queue(maxsize=cpu_count())
-    generate_blobs_thread = multiprocessing.Process(target=generate_blobs, name="blobs_process", args=(blobs_queue, tags, dts_comp_support))
-    generate_blobs_thread.start()
+    logger.info("stage 1 blobs thread quit")
 
-    while True:
-        item = blobs_queue.get()
-        if "quit" in item:
-            break
-
-        yield from item["blobs"]
-
-    generate_blobs_thread.join()
-    logger.info("yield blob quit")
-
-def split_into_chunks(list, chunk_size):
-    return (list[i:i+chunk_size] for i in range(0, len(list), chunk_size))
-
-def generate_stage_2_blobs(queue: multiprocessing.Queue, tags, dts_comp_support: bool):
-    todo_db = BsdDB(getDataDir() + '/todo.db', False, lambda x: x, shared=False, cachesize=(1,0))
-    vers_db = BsdDB(getDataDir() + '/versions.db', True, PathList, shared=False, cachesize=(1,0))
-
-    for tag in tags:
-        if sigint_caught:
-            break
-
-        vers = vers_db.get(tag)
-        if vers is None:
-            logger.warning("tag %s not in vers", tag)
-            continue
-
-        idxes = []
-        for idx, path in vers.iter():
-            file_hash = todo_db.get(idx)
-            if file_hash is not None:
-                todo_db.delete(idx)
-                idxes.append((idx, file_hash, os.path.basename(path)))
-
-        if len(idxes) == 0:
-            continue
-
-        logger.info("updating refs of tag %s blobs %d", tag, len(idxes))
-
-        for chunk in split_into_chunks(idxes, math.ceil(len(idxes)/cpu_count())):
-            queue.put({"blobs": (chunk, tag.decode(), dts_comp_support)})
-
-    queue.put({"quit": True})
-    todo_db.close()
-    vers_db.close()
-    logger.info("blobs2 thread quit")
-
-def yield_stage_2_blobs(tags, dts_comp_support: bool):
-    blobs_queue = multiprocessing.Queue(maxsize=cpu_count())
-    generate_blobs_thread = multiprocessing.Process(target=generate_stage_2_blobs, name="blobs2_process", args=(blobs_queue, tags, dts_comp_support))
-    generate_blobs_thread.start()
+def process_stage_1_blobs(blobs_queue: multiprocessing.Queue, results_queue: multiprocessing.Queue):
+    logging.info("stage 1 process thread start")
+    dts_comp_support = bool(int(script('dts-comp')))
 
     while True:
-        item = blobs_queue.get()
-        if "quit" in item:
+        args = blobs_queue.get()
+        if "quit" in args:
             break
 
-        yield item["blobs"]
+        result = {
+            "defs": [],
+            "docs": [],
+        }
 
-    logger.info("yield blob quit")
-    generate_blobs_thread.join()
+        if dts_comp_support:
+            result["dts_comps"] = []
 
-def db_defs_thread(defs_queue: multiprocessing.Queue):
+        for blob in args["blobs"]:
+            if defs := get_defs(blob):
+                result["defs"].extend(defs)
+            if docs := get_docs(blob):
+                result["docs"].extend(docs)
+            if dts_comp_support:
+                if dts_comps := get_comps(blob):
+                    result["dts_comps"].extend(dts_comps)
+
+        results_queue.put(result)
+
+    logging.info("stage 1 process thread quit")
+
+def put_stage_1_results(defs_queue: multiprocessing.Queue):
+    logging.info("stage 1 put thread start")
+
     dts_comp_support = bool(int(script('dts-comp')))
     db = RelationsDB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, update_cache=10000)
     processed = 0
@@ -556,13 +481,129 @@ def db_defs_thread(defs_queue: multiprocessing.Queue):
             logger.info("defs stats %f %f %f %f %f", db.defs.raw_put_time, db.defs.raw_get_time,
                   db.defs.raw_put_convert_time, db.defs.raw_get_convert_time, db.defs.append_time)
 
-    logger.info("quitting defs thread")
     db.close()
 
-def db_refs_thread(refs_queue: multiprocessing.Queue):
+    logger.info("stage 1 put thread quit")
+
+def update_stage_1(tags):
+    logger.info("stage 1 update start")
+
+    db_blobs_queue = multiprocessing.Queue(maxsize=4*cpu_count())
+    db_blobs_thread = multiprocessing.Process(target=generate_stage_1_blobs, args=(db_blobs_queue, tags))
+    db_blobs_thread.start()
+
+    results_queue = multiprocessing.Queue(maxsize=4*cpu_count())
+    results_thread = multiprocessing.Process(target=put_stage_1_results, args=(results_queue,))
+    results_thread.start()
+
+    processing_threads = []
+    for _ in range(cpu_count()):
+        process = multiprocessing.Process(target=process_stage_1_blobs, args=(db_blobs_queue, results_queue))
+        processing_threads.append(process)
+        process.start()
+
+    db_blobs_thread.join()
+
+    for _ in range(len(processing_threads)):
+        db_blobs_queue.put({"quit": True})
+
+    for p in processing_threads:
+        p.join()
+        logger.info("process joined %s", str(p))
+
+    results_queue.put({"quit": True})
+    results_thread.join()
+
+    logger.info("stage 1 update quit")
+
+
+def split_into_chunks(list, chunk_size):
+    return (list[i:i+chunk_size] for i in range(0, len(list), chunk_size))
+
+def generate_stage_2_blobs(queue: multiprocessing.Queue, tags):
+    logger.info("stage 2 blob thread start")
+
+    todo_db = BsdDB(getDataDir() + '/todo.db', False, lambda x: x, shared=False, cachesize=(2,0))
+    vers_db = BsdDB(getDataDir() + '/versions.db', True, PathList, shared=False, cachesize=(2,0))
+
+    for tag in tags:
+        if sigint_caught:
+            break
+
+        vers = vers_db.get(tag)
+        if vers is None:
+            logger.warning("tag %s not in vers", tag)
+            continue
+
+        idxes = []
+        for idx, path in vers.iter():
+            file_hash = todo_db.get(idx)
+            if file_hash is not None:
+                todo_db.delete(idx)
+                idxes.append((idx, file_hash, os.path.basename(path)))
+
+        if len(idxes) == 0:
+            continue
+
+        logger.info("updating refs of tag %s blobs %d", tag, len(idxes))
+
+        for chunk in split_into_chunks(idxes, math.ceil(len(idxes)/(cpu_count()*3))):
+            queue.put({"blobs": (chunk, tag.decode())})
+
+    todo_db.close()
+    vers_db.close()
+
+    logger.info("stage 2 blob thread quit")
+
+def process_stage_2_blobs(blobs_queue: multiprocessing.Queue, results_queue: multiprocessing.Queue):
+    logger.info("stage 2 process thread start")
+
+    dts_comp_support = bool(int(script('dts-comp')))
+
+    defs = CachedBsdDB(getDataDir() + '/definitions.db', True, DefList, 10000)
+    if dts_comp_support:
+        comps = CachedBsdDB(getDataDir() + '/compatibledts.db', True, DefList, 10000)
+    else:
+        comps = None
+
+    vers_db = CachedBsdDB(getDataDir() + '/versions.db', True, PathList, cpu_count())
+
+    while True:
+        args = blobs_queue.get()
+        if "quit" in args:
+            break
+
+        blobs, tag = args["blobs"]
+
+        vers = set()
+        pathlist = vers_db.get(tag)
+        for idx, _ in pathlist.iter():
+            vers.add(idx)
+
+        result = {
+            "tag": tag,
+            "refs": [],
+        }
+
+        if dts_comp_support:
+            result["dts_comps_docs"] = []
+
+        for blob in blobs:
+            if refs := get_refs(blob, defs, vers):
+                result["refs"].extend(refs)
+            if dts_comp_support:
+                if comps_docs := get_comps_docs(blob, comps):
+                    result["dts_comps_docs"].extend(comps_docs)
+
+        results_queue.put(result)
+
+    logger.info("stage 2 process thread quit")
+
+def put_stage_2_results(refs_queue: multiprocessing.Queue):
+    logger.info("stage 2 put thread start")
+
     dts_comp_support = bool(int(script('dts-comp')))
     db = RelationsDB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, update_cache=10000)
-    vers_db = BsdDB(getDataDir() + '/versions.db', True, PathList, shared=False)
 
     db.defs.close()
     db.defs.readonly = True
@@ -571,9 +612,6 @@ def db_refs_thread(refs_queue: multiprocessing.Queue):
         db.comps.close()
         db.comps.readonly = True
         db.comps.open()
-
-    in_def_cache = Cache(1000)
-    vers_cache = Cache(cpu_count())
 
     processed = 0
     total_processing_time = 0
@@ -585,15 +623,6 @@ def db_refs_thread(refs_queue: multiprocessing.Queue):
 
         start_tag = time.time()
 
-        tag = result["tag"]
-        vers = vers_cache.get(tag)
-        if vers is None:
-            vers = set()
-            pathlist = vers_db.get(tag)
-            for idx, _ in pathlist.iter():
-                vers.add(idx)
-            vers_cache.put(tag, vers)
-
         start_dts_comps_docs = time.time()
 
         if "dts_comps_docs" in result and result["dts_comps_docs"] is not None:
@@ -602,7 +631,7 @@ def db_refs_thread(refs_queue: multiprocessing.Queue):
         start_refs = time.time()
 
         if result["refs"] is not None:
-            add_refs(db, in_def_cache, vers, result["refs"])
+            add_refs(db, result["refs"])
 
         end = time.time()
 
@@ -619,41 +648,46 @@ def db_refs_thread(refs_queue: multiprocessing.Queue):
             logger.info("refs stats %f %f %f %f %f", db.refs.raw_put_time, db.refs.raw_get_time,
                   db.refs.raw_put_convert_time, db.refs.raw_get_convert_time, db.refs.append_time)
 
-    logger.info("quitting refs thread")
     db.close()
 
-def update(pool):
-    dts_comp_support = bool(int(script('dts-comp')))
+    logger.info("stage 2 put thread quit")
+
+def update_stage_2(tags):
+    logger.info("stage 2 update start")
+
+    db_blobs_queue = multiprocessing.Queue(maxsize=4*cpu_count())
+    db_blobs_thread = multiprocessing.Process(target=generate_stage_2_blobs, args=(db_blobs_queue, tags))
+    db_blobs_thread.start()
+
+    db_put_queue = multiprocessing.Queue(maxsize=4*cpu_count())
+    db_put_thread = multiprocessing.Process(target=put_stage_2_results, args=(db_put_queue,))
+    db_put_thread.start()
+
+    processing_threads = []
+    for _ in range(cpu_count()):
+        process = multiprocessing.Process(target=process_stage_2_blobs, args=(db_blobs_queue, db_put_queue))
+        process.start()
+        processing_threads.append(process)
+
+    db_blobs_thread.join()
+    logger.info("blobs thread joined")
+
+    for _ in range(len(processing_threads)):
+        db_blobs_queue.put({"quit": True})
+
+    for p in processing_threads:
+        p.join()
+        logger.info("process joined %s", str(p))
+
+    db_put_queue.put({"quit": True})
+    db_put_thread.join()
+
+    logger.info("stage 2 update quit")
+
+def update():
     tags = scriptLines('list-tags')
-
-    defs_queue = multiprocessing.Queue(maxsize=cpu_count())
-    defs_thread = multiprocessing.Process(target=db_defs_thread, args=(defs_queue,), name="defs_process")
-    defs_thread.start()
-
-    i = 0
-    for result in pool.imap_unordered(call_stage_1, yield_blobs(tags, dts_comp_support)):
-        i += 1
-        defs_queue.put(result)
-        if i % 1000 == 0:
-            logger.info("defs queue len %d", defs_queue.qsize())
-
-    defs_queue.put({"quit": True})
-    defs_thread.join()
-
-    logger.info("processing refs")
-
-    refs_queue = multiprocessing.Queue(maxsize=cpu_count())
-    refs_thread = multiprocessing.Process(target=db_refs_thread, args=(refs_queue,))
-    refs_thread.start()
-
-    for result in pool.imap_unordered(call_stage_2, yield_stage_2_blobs(tags, dts_comp_support)):
-        i += 1
-        refs_queue.put(result)
-        if refs_queue.qsize() % 1000 == 0:
-            logger.info("refs queue len %d", refs_queue.qsize())
-
-    refs_queue.put({"quit": True})
-    refs_thread.join()
+    update_stage_1(tags)
+    update_stage_2(tags)
 
 sigint_caught = False
 
@@ -670,16 +704,17 @@ def ignore_sigint():
     signal.signal(signal.SIGINT, lambda _,__: None)
 
 if __name__ == "__main__":
+    logging.info("starting update job")
+
     dts_comp_support = bool(int(script('dts-comp')))
     set_start_method('spawn')
-    with Pool(initializer=ignore_sigint) as pool:
-        update(pool)
+    update()
 
-    db = RelationsDB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, update_cache=100000)
+    #db = RelationsDB(getDataDir(), readonly=False, dtscomp=dts_comp_support, shared=False, update_cache=100000)
     logger.info("generating def caches")
-    generate_defs_caches(db)
+    #generate_defs_caches(db)
     logger.info("def caches generated")
-    db.close()
+    #db.close()
     logger.info("database closed")
 
 
