@@ -529,7 +529,7 @@ def update_stage_1(tags):
 
 
 def split_into_chunks(list, chunk_size):
-    return (list[i:i+chunk_size] for i in range(0, len(list), chunk_size))
+    return (list[i:i+chunk_size] for i in range(0, len(list), max(1, chunk_size)))
 
 def generate_stage_2_blobs(queue: multiprocessing.Queue, tags):
     logger.info("stage 2 blob thread start")
