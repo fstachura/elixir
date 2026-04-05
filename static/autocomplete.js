@@ -462,7 +462,7 @@ var AutoComplete = /** @class */ (function () {
          */
         _Position: function () {
             this.DOMResults.setAttribute("class", "autocomplete");
-            this.DOMResults.setAttribute("style", "top:" + (this.Input.offsetTop + this.Input.offsetHeight) + "px;left:" + this.Input.offsetLeft + "px;width:" + this.Input.clientWidth + "px;");
+            this.DOMResults.setAttribute("style", "top:" + (this.Input.offsetTop + this.Input.offsetHeight) + "px");
         },
         /**
          * Execute the render of results DOM element

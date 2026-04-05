@@ -340,6 +340,10 @@ h2 {
   align-items: center;
 }
 
+.search-controls {
+  position: relative;
+}
+
 .filter {
   padding: 0.5em;
   background: #222;
@@ -1598,6 +1602,7 @@ input[data-autocomplete] {
   transition-duration: 0.3s;
   transition-property: all;
   transition-timing-function: cubic-bezier(0, 1, 0.5, 1);
+  width: 100%;
 }
 .autocomplete:active,
 .autocomplete:focus,
