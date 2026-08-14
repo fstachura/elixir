@@ -89,7 +89,7 @@ def add_defs(db: DB, defs: DefsDict):
 def add_refs(db: DB, in_ver_cache: Cache, idx_to_hash_and_filename: IdxCache, refs: RefsDict):
     for ident, idx_to_lines in refs.items():
         # Skip reference if definition was not collected in this tag
-        deflist = def_cache.get(ident)
+        deflist = db.defs.get(ident)
         always_indexed = ident in always_indexed_tokens
         in_version_dec = True
 
