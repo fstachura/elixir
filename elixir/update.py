@@ -86,10 +86,12 @@ def add_defs(db: DB, defs: DefsDict):
 # Add references to database
 def add_refs(db: DB, in_ver_cache: Cache, idx_to_hash_and_filename: IdxCache, refs: RefsDict):
     for ident, idx_to_lines in refs.items():
+        # Skip reference if definition was not collected in this tag
         deflist = db.defs.get(ident)
         if deflist is None:
             continue
 
+        in_version_dec = True
         if not in_ver_cache.contains(ident):
             in_version = def_in_version(deflist, idx_to_hash_and_filename)
             if not in_version:
