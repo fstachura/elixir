@@ -123,7 +123,11 @@ class Query:
             for tok in tokens:
                 even = not even
                 tok2 = prefix + tok
-                if even and self.db.defs_cache[family].exists(tok2):
+                known_token = \
+                    self.db.defs_cache[family].exists(tok2) or \
+                    lib.isAlwaysIndexed(tok2)
+
+                if even and known_token:
                     tok = b'\033[31m' + tok2 + b'\033[0m'
                 else:
                     tok = lib.unescape(tok)
