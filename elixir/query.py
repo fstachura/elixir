@@ -299,7 +299,7 @@ class Query:
         symbol_references = []
         symbol_doccomments = []
 
-        if not self.db.defs.exists(ident):
+        if not self.db.defs.exists(ident) and not self.db.refs.exists(ident):
             return symbol_definitions, symbol_references, symbol_doccomments, False
 
         if not self.db.vers.exists(version):
@@ -307,8 +307,13 @@ class Query:
 
         files_this_version = self.db.vers.get(version).iter()
         this_ident = self.db.defs.get(ident)
-        defs_this_ident = this_ident.iter(dummy=True)
-        macros_this_ident = this_ident.get_macros()
+        if this_ident is not None:
+            defs_this_ident = this_ident.iter(dummy=True)
+            macros_this_ident = this_ident.get_macros()
+        else:
+            defs_this_ident = data.DefList().iter(dummy=True)
+            macros_this_ident = ''
+
         # FIXME: see why we can have a discrepancy between defs_this_ident and refs
         if self.db.refs.exists(ident):
             refs = self.db.refs.get(ident).iter(dummy=True)
