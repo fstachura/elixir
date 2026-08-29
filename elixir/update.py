@@ -20,8 +20,7 @@ from elixir.lib import (
     isIdent,
     script,
     scriptLines,
-    always_indexed_tokens,
-    always_indexed_prefixes,
+    isAlwaysIndexed,
 )
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
@@ -90,20 +89,20 @@ def add_refs(db: DB, in_ver_cache: Cache, idx_to_hash_and_filename: IdxCache, re
     for ident, idx_to_lines in refs.items():
         # Skip reference if definition was not collected in this tag
         deflist = db.defs.get(ident)
-        always_indexed = ident in always_indexed_tokens
+        always_indexed = isAlwaysIndexed(ident)
         in_version_dec = True
 
-        if not in_ver_cache.contains(ident):
-            in_version = def_in_version(deflist, idx_to_hash_and_filename)
-            if not in_version:
-                in_ver_cache.put(ident, False)
+        if not always_indexed:
+            if not in_ver_cache.contains(ident):
+                in_version = def_in_version(deflist, idx_to_hash_and_filename)
+                if not in_version:
+                    in_ver_cache.put(ident, False)
+                    in_version_dec = False
+                in_ver_cache.put(ident, True)
+            elif not in_ver_cache.get(ident):
                 in_version_dec = False
-            in_ver_cache.put(ident, True)
-        elif not in_ver_cache.get(ident):
-            in_version_dec = False
 
-        valid_prefix = any(ident.startswith(pref) for pref in always_indexed_prefixes)
-        if (deflist is None or not in_version_dec) and not (always_indexed or valid_prefix):
+        if (deflist is None or not in_version_dec) and not always_indexed:
             continue
 
         def deflist_exists(idx: int, line: int):
@@ -261,14 +260,15 @@ def get_refs(file_id: FileId, defs: CachedBsdDB) -> Optional[RefsDict]:
         even = not even
         if even:
             tok = prefix + tok
-
             # We only index CONFIG_??? in makefiles
             if (family != 'M' or tok.startswith(b'CONFIG_')):
                 deflist = defs.get(tok)
-                if not deflist:
+                always = isAlwaysIndexed(tok)
+
+                if not deflist and not always:
                     continue
 
-                if deflist_exists(deflist, idx, line_num):
+                if deflist and deflist_exists(deflist, idx, line_num):
                     continue
 
                 if tok not in refs:
